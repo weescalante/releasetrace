@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 const redZoneMovies = [
   {
     title: "Example Movie One",
@@ -66,16 +68,17 @@ export default function Home() {
     <main className="min-h-screen bg-black text-white">
       <header className="border-b border-zinc-900">
         <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-6 py-5">
-          <div>
-            <p className="text-xl font-bold tracking-tight">
-              ReleaseTrace
-            </p>
-          </div>
+          <Link href="/" className="text-xl font-bold tracking-tight">
+            ReleaseTrace
+          </Link>
 
           <nav className="hidden gap-8 text-sm text-zinc-400 md:flex">
-            <a href="#" className="transition hover:text-white">
+            <Link
+              href="/movies"
+              className="transition hover:text-white"
+            >
               Movies
-            </a>
+            </Link>
 
             <a href="#" className="transition hover:text-white">
               Calendar
@@ -110,9 +113,12 @@ export default function Home() {
           </p>
 
           <div className="mt-9 flex flex-wrap gap-4">
-            <button className="rounded-lg bg-white px-5 py-3 font-medium text-black transition hover:bg-zinc-200">
+            <Link
+              href="/movies"
+              className="rounded-lg bg-white px-5 py-3 font-medium text-black transition hover:bg-zinc-200"
+            >
               Explore Releases
-            </button>
+            </Link>
 
             <button className="rounded-lg border border-zinc-700 px-5 py-3 font-medium text-white transition hover:border-zinc-500">
               View Red Zone
@@ -201,7 +207,10 @@ export default function Home() {
                   className="flex items-center justify-between gap-6 p-5"
                 >
                   <div>
-                    <p className="font-medium">{release.title}</p>
+                    <p className="font-medium">
+                      {release.title}
+                    </p>
+
                     <p className="mt-1 text-sm text-zinc-500">
                       {release.type}
                     </p>
@@ -227,7 +236,9 @@ export default function Home() {
             <div className="mt-8 divide-y divide-zinc-800 rounded-xl border border-zinc-800">
               {recentChanges.map((item) => (
                 <div key={item.title} className="p-5">
-                  <p className="font-medium">{item.title}</p>
+                  <p className="font-medium">
+                    {item.title}
+                  </p>
 
                   <p className="mt-2 text-sm text-zinc-400">
                     {item.change}
