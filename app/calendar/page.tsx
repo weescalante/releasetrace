@@ -307,7 +307,7 @@ export default async function CalendarPage() {
             </Link>
 
             <a
-              href="#"
+              href="/red-zone"
               className="transition hover:text-white"
             >
               Red Zone

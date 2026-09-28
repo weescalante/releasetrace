@@ -129,7 +129,7 @@ export default async function MoviesPage() {
             <Link href="/calendar" className="transition hover:text-white">
               Calendar
             </Link>
-            <a href="#" className="transition hover:text-white">
+            <a href="/red-zone" className="transition hover:text-white">
               Red Zone
             </a>
 
