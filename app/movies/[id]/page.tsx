@@ -199,7 +199,7 @@ export default async function MoviePage({
               Movies
             </a>
 
-            <a href="#" className="transition hover:text-white">
+            <a href="/calendar" className="transition hover:text-white">
               Calendar
             </a>
 
