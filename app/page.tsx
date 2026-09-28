@@ -73,25 +73,28 @@ export default function Home() {
           </Link>
 
           <nav className="hidden gap-8 text-sm text-zinc-400 md:flex">
-            <Link
-              href="/movies"
-              className="transition hover:text-white"
-            >
-              Movies
-            </Link>
+  <Link
+    href="/movies"
+    className="transition hover:text-white"
+  >
+    Movies
+  </Link>
 
-            <a href="#" className="transition hover:text-white">
-              Calendar
-            </a>
+  <Link
+    href="/calendar"
+    className="transition hover:text-white"
+  >
+    Calendar
+  </Link>
 
-            <a href="#" className="transition hover:text-white">
-              Red Zone
-            </a>
+  <a href="#" className="transition hover:text-white">
+    Red Zone
+  </a>
 
-            <a href="#" className="transition hover:text-white">
-              Changes
-            </a>
-          </nav>
+  <a href="#" className="transition hover:text-white">
+    Changes
+  </a>
+</nav>
         </div>
       </header>
 
