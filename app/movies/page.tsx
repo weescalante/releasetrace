@@ -36,12 +36,12 @@ async function getNowPlayingMovies(region: Region) {
       next: {
         revalidate: 3600,
       },
-    }
+    },
   );
 
   if (!response.ok) {
     throw new Error(
-      `TMDB request for ${region} failed with status ${response.status}.`
+      `TMDB request for ${region} failed with status ${response.status}.`,
     );
   }
 
@@ -52,7 +52,7 @@ async function getNowPlayingMovies(region: Region) {
 
 function combineMovies(
   usMovies: TmdbMovie[],
-  canadaMovies: TmdbMovie[]
+  canadaMovies: TmdbMovie[],
 ): ReleaseTraceMovie[] {
   const movieMap = new Map<number, ReleaseTraceMovie>();
 
@@ -126,10 +126,9 @@ export default async function MoviesPage() {
               Movies
             </Link>
 
-            <a href="#" className="transition hover:text-white">
+            <Link href="/calendar" className="transition hover:text-white">
               Calendar
-            </a>
-
+            </Link>
             <a href="#" className="transition hover:text-white">
               Red Zone
             </a>
@@ -191,9 +190,7 @@ export default async function MoviesPage() {
                     </p>
                   </div>
 
-                  <h2 className="mt-2 text-lg font-semibold">
-                    {movie.title}
-                  </h2>
+                  <h2 className="mt-2 text-lg font-semibold">{movie.title}</h2>
 
                   <div className="mt-3 flex items-center justify-between gap-4 text-sm text-zinc-500">
                     <span>{formatDate(movie.release_date)}</span>
