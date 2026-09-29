@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# ReleaseTrace local database
+data/releasetrace.db
+data/releasetrace.db-shm
+data/releasetrace.db-wal
