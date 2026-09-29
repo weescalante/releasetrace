@@ -1,0 +1,23 @@
+name: CinemaCity Ingestion
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger CinemaCity ingestion
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "https://releasetrace-app.vercel.app/api/ingest/cinemacity"
