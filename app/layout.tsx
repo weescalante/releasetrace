@@ -14,11 +14,11 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "ReleaseTrace",
-    template: "%s | ReleaseTrace",
+    default: "ShadowWindow",
+    template: "%s | ShadowWindow",
   },
   description:
-    "Track theatrical, digital, physical, streaming, and observed unauthorized movie availability in one place.",
+    "Track theatrical, digital, physical, streaming, and unauthorized availability across film and television.",
 };
 
 export default function RootLayout({
