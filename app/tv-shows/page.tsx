@@ -305,7 +305,7 @@ export default async function TVShowsPage({
         show.vote_count,
 
       href:
-        `/tv-shows/${show.id}`,
+        `/tv-shows/${show.id}?from=tv-shows`,
     }));
 
   const initialView =

@@ -1,14 +1,33 @@
 import { XMLParser } from "fast-xml-parser";
 
-import { saveCloudDetection } from "../lib/cloudDatabase";
+import {
+  saveCloudDetection,
+} from "../lib/cloudDatabase";
+
+import {
+  verifyMovieMatchWithAI,
+  type AiMatchCandidate,
+} from "../lib/aiMatchVerifier";
+
 import {
   recordFeedFailure,
   recordFeedSuccess,
 } from "../lib/feedStatus";
 
-export type Signal = "CAM" | "WEB" | "OTHER";
+import {
+  approveRelatedMatchReviews,
+  saveMatchReview,
+  type MatchReviewReason,
+} from "../lib/matchReviews";
 
-export type ReleaseRegion = "US" | "CA";
+export type Signal =
+  | "CAM"
+  | "WEB"
+  | "OTHER";
+
+export type ReleaseRegion =
+  | "US"
+  | "CA";
 
 export type CinemaCityMovie = {
   title: string;
@@ -40,11 +59,54 @@ export type CinemaCityMovie = {
   sourceUrl: string;
 };
 
+type TmdbSearchCandidate = {
+  id: number;
+
+  title: string;
+  original_title?: string;
+
+  overview?: string;
+
+  poster_path: string | null;
+
+  release_date?: string;
+
+  original_language?: string;
+
+  origin_country?: string[];
+};
+
 type TmdbSearchResponse = {
-  results: {
+  results: TmdbSearchCandidate[];
+};
+
+type TmdbMovieDetails = {
+  id: number;
+
+  title: string;
+
+  original_title?: string;
+
+  release_date?: string;
+
+  overview?: string;
+
+  original_language?: string;
+
+  origin_country?: string[];
+
+  runtime?: number | null;
+
+  imdb_id?: string | null;
+
+  genres?: {
     id: number;
-    title: string;
-    poster_path: string | null;
+    name: string;
+  }[];
+
+  production_countries?: {
+    iso_3166_1: string;
+    name: string;
   }[];
 };
 
@@ -66,6 +128,12 @@ type ReleaseMatch = {
 
 type TmdbMatch = {
   id: number;
+
+  matchedTitle: string;
+  matchedYear: string | null;
+
+  confidence: number;
+
   posterPath: string | null;
 
   theatricalReleaseDate: string | null;
@@ -78,22 +146,172 @@ type TmdbMatch = {
   physicalReleaseRegion: ReleaseRegion | null;
 };
 
-type RawFeedItem = {
-  title?: unknown;
-  quality?: unknown;
-  year?: unknown;
-  country?: unknown;
-  pubDate?: unknown;
-  link?: unknown;
+type TmdbCandidateScore = {
+  candidate: TmdbSearchCandidate;
+
+  candidateYear: string | null;
+
+  titleSimilarity: number;
+  descriptionSimilarity: number;
+
+  exactTitle: boolean;
+
+  confidence: number;
 };
 
-const FEED_SOURCE = "CinemaCity";
+type TmdbLookupResult = {
+  match: TmdbMatch | null;
+
+  reviewReason: MatchReviewReason | null;
+
+  candidateTmdbId: number | null;
+
+  candidateTitle: string | null;
+
+  candidateYear: string | null;
+
+  confidence: number | null;
+
+  details: string | null;
+};
+
+type RawFeedItem = {
+  title?: unknown;
+
+  quality?: unknown;
+
+  year?: unknown;
+
+  country?: unknown;
+
+  pubDate?: unknown;
+
+  link?: unknown;
+
+  description?: unknown;
+
+  genre?: unknown;
+
+  audioLanguage?: unknown;
+
+  subtitleLanguage?: unknown;
+};
+
+type SourceMatchEvidence = {
+  sourceTitle: string;
+
+  normalizedTitle: string;
+
+  year: string;
+
+  description: string;
+
+  country: string;
+
+  genres: string;
+
+  audioLanguage: string;
+
+  signal:
+    | "CAM"
+    | "WEB";
+
+  quality: string;
+};
+
+type AiFallbackResult = {
+  selectedCandidate:
+    TmdbSearchCandidate | null;
+
+  confidence:
+    number | null;
+
+  details:
+    string | null;
+};
+
+const FEED_SOURCE =
+  "CinemaCity";
+
+const TITLE_MATCH_THRESHOLD =
+  0.78;
+
+const AMBIGUITY_GAP =
+  6;
+
+/*
+ * Description remains our deterministic
+ * semantic tie-breaker.
+ *
+ * Gemini is invoked only after this normal
+ * matching layer cannot safely decide.
+ */
+const DESCRIPTION_MATCH_THRESHOLD =
+  0.82;
+
+const DESCRIPTION_AMBIGUITY_GAP =
+  0.2;
+
+/*
+ * Gemini must be extremely confident before
+ * it is allowed to automatically choose a
+ * TMDB identity.
+ *
+ * Anything below this goes to Admin Review.
+ */
+const AI_AUTO_MATCH_CONFIDENCE =
+  95;
+
+/*
+ * Limit how many TMDB records we send to
+ * Gemini.
+ *
+ * This:
+ *
+ * - keeps requests small
+ * - keeps free-tier usage low
+ * - prevents irrelevant long candidate lists
+ */
+const AI_MAX_CANDIDATES =
+  6;
+
+function decodeHtmlEntities(
+  value: string,
+) {
+  return value
+    .replace(
+      /&#039;/g,
+      "'",
+    )
+    .replace(
+      /&#39;/g,
+      "'",
+    )
+    .replace(
+      /&quot;/g,
+      '"',
+    )
+    .replace(
+      /&amp;/g,
+      "&",
+    )
+    .replace(
+      /&lt;/g,
+      "<",
+    )
+    .replace(
+      /&gt;/g,
+      ">",
+    );
+}
 
 export function normalizeTitle(
   title: string,
 ): string {
   const primaryTitle =
-    title.split("/")[0].trim();
+    title
+      .split("/")[0]
+      .trim();
 
   return primaryTitle
     .replace(
@@ -103,6 +321,516 @@ export function normalizeTitle(
     .trim();
 }
 
+function normalizeComparisonText(
+  value: string,
+) {
+  return value
+    .normalize(
+      "NFKD",
+    )
+    .replace(
+      /[\u0300-\u036f]/g,
+      "",
+    )
+    .toLowerCase()
+    .replace(
+      /&/g,
+      " and ",
+    )
+    .replace(
+      /[^a-z0-9]+/g,
+      " ",
+    )
+    .replace(
+      /\s+/g,
+      " ",
+    )
+    .trim();
+}
+
+function getTextSimilarity(
+  left: string,
+  right: string,
+) {
+  const normalizedLeft =
+    normalizeComparisonText(
+      left,
+    );
+
+  const normalizedRight =
+    normalizeComparisonText(
+      right,
+    );
+
+  if (
+    !normalizedLeft ||
+    !normalizedRight
+  ) {
+    return 0;
+  }
+
+  if (
+    normalizedLeft ===
+    normalizedRight
+  ) {
+    return 1;
+  }
+
+  const leftTokens =
+    new Set(
+      normalizedLeft.split(
+        " ",
+      ),
+    );
+
+  const rightTokens =
+    new Set(
+      normalizedRight.split(
+        " ",
+      ),
+    );
+
+  const intersection =
+    [...leftTokens].filter(
+      (token) =>
+        rightTokens.has(
+          token,
+        ),
+    ).length;
+
+  const union =
+    new Set([
+      ...leftTokens,
+      ...rightTokens,
+    ]).size;
+
+  if (
+    union ===
+    0
+  ) {
+    return 0;
+  }
+
+  const tokenScore =
+    intersection /
+    union;
+
+  const shorter =
+    normalizedLeft.length <
+    normalizedRight.length
+      ? normalizedLeft
+      : normalizedRight;
+
+  const longer =
+    normalizedLeft.length <
+    normalizedRight.length
+      ? normalizedRight
+      : normalizedLeft;
+
+  const containmentScore =
+    longer.includes(
+      shorter,
+    )
+      ? shorter.length /
+        longer.length
+      : 0;
+
+  return Math.max(
+    tokenScore,
+    containmentScore,
+  );
+}
+
+function isExactCandidateTitle(
+  sourceTitle: string,
+
+  candidate:
+    TmdbSearchCandidate,
+) {
+  const source =
+    normalizeComparisonText(
+      sourceTitle,
+    );
+
+  const translated =
+    normalizeComparisonText(
+      candidate.title,
+    );
+
+  const original =
+    candidate.original_title
+      ? normalizeComparisonText(
+          candidate.original_title,
+        )
+      : "";
+
+  return (
+    source ===
+      translated ||
+    (
+      Boolean(
+        original,
+      ) &&
+      source ===
+        original
+    )
+  );
+}
+
+function getCandidateTitleSimilarity(
+  sourceTitle: string,
+
+  candidate:
+    TmdbSearchCandidate,
+) {
+  const translatedScore =
+    getTextSimilarity(
+      sourceTitle,
+      candidate.title,
+    );
+
+  const originalScore =
+    candidate.original_title
+      ? getTextSimilarity(
+          sourceTitle,
+          candidate.original_title,
+        )
+      : 0;
+
+  return Math.max(
+    translatedScore,
+    originalScore,
+  );
+}
+
+function getCandidateDescriptionSimilarity(
+  sourceDescription:
+    string,
+
+  candidate:
+    TmdbSearchCandidate,
+) {
+  if (
+    !sourceDescription.trim() ||
+    !candidate.overview?.trim()
+  ) {
+    return 0;
+  }
+
+  return getTextSimilarity(
+    sourceDescription,
+    candidate.overview,
+  );
+}
+
+function getCandidateYear(
+  candidate:
+    TmdbSearchCandidate,
+) {
+  const date =
+    candidate.release_date;
+
+  if (
+    !date ||
+    !/^\d{4}/.test(
+      date,
+    )
+  ) {
+    return null;
+  }
+
+  return date.slice(
+    0,
+    4,
+  );
+}
+
+function getYearDifference(
+  sourceYear: string,
+
+  candidateYear:
+    string | null,
+) {
+  if (
+    !/^\d{4}$/.test(
+      sourceYear,
+    ) ||
+    !candidateYear ||
+    !/^\d{4}$/.test(
+      candidateYear,
+    )
+  ) {
+    return null;
+  }
+
+  return Math.abs(
+    Number(
+      sourceYear,
+    ) -
+      Number(
+        candidateYear,
+      ),
+  );
+}
+
+function isAiCandidateYearAcceptable(
+  sourceYear: string,
+
+  candidateYear:
+    string | null,
+) {
+  /*
+   * If either side has no reliable year,
+   * we cannot apply this particular guard.
+   */
+  if (
+    !/^\d{4}$/.test(
+      sourceYear,
+    ) ||
+    !candidateYear ||
+    !/^\d{4}$/.test(
+      candidateYear,
+    )
+  ) {
+    return true;
+  }
+
+  const difference =
+    Math.abs(
+      Number(
+        sourceYear,
+      ) -
+        Number(
+          candidateYear,
+        ),
+    );
+
+  /*
+   * Festival / first-release / wider
+   * distribution metadata may differ by one
+   * year.
+   *
+   * Gemini cannot automatically override a
+   * larger year discrepancy.
+   */
+  return (
+    difference <=
+    1
+  );
+}
+
+function calculateCandidateScore(
+  sourceTitle: string,
+
+  sourceYear: string,
+
+  sourceDescription:
+    string,
+
+  candidate:
+    TmdbSearchCandidate,
+): TmdbCandidateScore {
+  const candidateYear =
+    getCandidateYear(
+      candidate,
+    );
+
+  const titleSimilarity =
+    getCandidateTitleSimilarity(
+      sourceTitle,
+      candidate,
+    );
+
+  const descriptionSimilarity =
+    getCandidateDescriptionSimilarity(
+      sourceDescription,
+      candidate,
+    );
+
+  const exactTitle =
+    isExactCandidateTitle(
+      sourceTitle,
+      candidate,
+    );
+
+  const yearDifference =
+    getYearDifference(
+      sourceYear,
+      candidateYear,
+    );
+
+  let yearScore =
+    0.5;
+
+  if (
+    yearDifference ===
+    0
+  ) {
+    yearScore =
+      1;
+  } else if (
+    yearDifference ===
+    1
+  ) {
+    yearScore =
+      0.5;
+  } else if (
+    yearDifference !==
+    null
+  ) {
+    yearScore =
+      0;
+  }
+
+  let confidence =
+    Math.round(
+      (
+        titleSimilarity *
+          0.85 +
+        yearScore *
+          0.15
+      ) *
+        100,
+    );
+
+  if (
+    exactTitle &&
+    yearDifference ===
+      0
+  ) {
+    confidence =
+      100;
+  }
+
+  return {
+    candidate,
+
+    candidateYear,
+
+    titleSimilarity,
+
+    descriptionSimilarity,
+
+    exactTitle,
+
+    confidence,
+  };
+}
+
+function dedupeCandidates(
+  candidates:
+    TmdbSearchCandidate[],
+) {
+  return Array.from(
+    new Map(
+      candidates.map(
+        (
+          candidate,
+        ) => [
+          candidate.id,
+          candidate,
+        ],
+      ),
+    ).values(),
+  );
+}
+
+function splitCommaList(
+  value: string,
+) {
+  return value
+    .split(",")
+    .map(
+      (item) =>
+        item.trim(),
+    )
+    .filter(
+      Boolean,
+    );
+}
+
+function combineDetails(
+  first:
+    string | null,
+
+  second:
+    string | null,
+) {
+  if (
+    first &&
+    second
+  ) {
+    return `${first} ${second}`;
+  }
+
+  return (
+    first ??
+    second ??
+    null
+  );
+}
+
+function isPotentiallyRelevantReviewYear(
+  year: string,
+
+  publishedAt: string,
+) {
+  if (
+    !/^\d{4}$/.test(
+      year,
+    )
+  ) {
+    return true;
+  }
+
+  const parsedPublishedAt =
+    new Date(
+      publishedAt,
+    );
+
+  const referenceDate =
+    Number.isNaN(
+      parsedPublishedAt
+        .getTime(),
+    )
+      ? new Date()
+      : parsedPublishedAt;
+
+  const earliest =
+    new Date(
+      referenceDate,
+    );
+
+  earliest.setUTCDate(
+    earliest.getUTCDate() -
+      120,
+  );
+
+  const latest =
+    new Date(
+      referenceDate,
+    );
+
+  latest.setUTCDate(
+    latest.getUTCDate() +
+      30,
+  );
+
+  const sourceYear =
+    Number(
+      year,
+    );
+
+  return (
+    sourceYear >=
+      earliest
+        .getUTCFullYear() &&
+    sourceYear <=
+      latest
+        .getUTCFullYear()
+  );
+}
+
 export function classifyQuality(
   quality: string,
 ): Signal {
@@ -110,18 +838,32 @@ export function classifyQuality(
     quality.toUpperCase();
 
   if (
-    normalizedQuality.includes("CAM") ||
-    normalizedQuality.includes("TS") ||
-    normalizedQuality.includes("TELESYNC")
+    normalizedQuality.includes(
+      "CAM",
+    ) ||
+    normalizedQuality.includes(
+      "TS",
+    ) ||
+    normalizedQuality.includes(
+      "TELESYNC",
+    )
   ) {
     return "CAM";
   }
 
   if (
-    normalizedQuality.includes("WEB") ||
-    normalizedQuality.includes("WEBDL") ||
-    normalizedQuality.includes("WEB-DL") ||
-    normalizedQuality.includes("WEBRIP")
+    normalizedQuality.includes(
+      "WEB",
+    ) ||
+    normalizedQuality.includes(
+      "WEBDL",
+    ) ||
+    normalizedQuality.includes(
+      "WEB-DL",
+    ) ||
+    normalizedQuality.includes(
+      "WEBRIP",
+    )
   ) {
     return "WEB";
   }
@@ -130,38 +872,70 @@ export function classifyQuality(
 }
 
 export function isRecentRelease(
-  releaseDate: string | null,
+  releaseDate:
+    string | null,
 ): boolean {
-  if (!releaseDate) {
+  if (
+    !releaseDate
+  ) {
     return false;
   }
 
   const release =
-    new Date(releaseDate);
+    new Date(
+      releaseDate,
+    );
 
   const today =
     new Date();
 
   const daysDifference =
-    (today.getTime() -
-      release.getTime()) /
-    (1000 * 60 * 60 * 24);
+    (
+      today.getTime() -
+      release.getTime()
+    ) /
+    (
+      1000 *
+      60 *
+      60 *
+      24
+    );
 
   return (
-    daysDifference >= -30 &&
-    daysDifference <= 120
+    daysDifference >=
+      -30 &&
+    daysDifference <=
+      120
   );
 }
 
+function getTmdbToken() {
+  const token =
+    process.env
+      .TMDB_READ_ACCESS_TOKEN;
+
+  if (
+    !token
+  ) {
+    throw new Error(
+      "TMDB_READ_ACCESS_TOKEN is missing.",
+    );
+  }
+
+  return token;
+}
+
 function firstReleaseForType(
-  releaseData: TmdbReleaseDatesResponse,
+  releaseData:
+    TmdbReleaseDatesResponse,
+
   type: number,
 ): ReleaseMatch | null {
   const preferredRegions:
     ReleaseRegion[] = [
-    "US",
-    "CA",
-  ];
+      "US",
+      "CA",
+    ];
 
   for (
     const regionCode of
@@ -174,7 +948,9 @@ function firstReleaseForType(
           regionCode,
       );
 
-    if (!region) {
+    if (
+      !region
+    ) {
       continue;
     }
 
@@ -182,28 +958,40 @@ function firstReleaseForType(
       region.release_dates
         .filter(
           (release) =>
-            release.type === type,
+            release.type ===
+            type,
         )
         .map(
           (release) =>
             release.release_date,
         )
-        .filter(Boolean)
+        .filter(
+          Boolean,
+        )
         .sort(
-          (a, b) =>
-            new Date(a).getTime() -
-            new Date(b).getTime(),
+          (
+            a,
+            b,
+          ) =>
+            new Date(
+              a,
+            ).getTime() -
+            new Date(
+              b,
+            ).getTime(),
         );
 
     if (
-      matchingDates.length > 0
+      matchingDates.length >
+      0
     ) {
       return {
         date:
-          matchingDates[0].slice(
-            0,
-            10,
-          ),
+          matchingDates[0]
+            .slice(
+              0,
+              10,
+            ),
 
         region:
           regionCode,
@@ -214,40 +1002,88 @@ function firstReleaseForType(
   return null;
 }
 
-async function findTmdbMovie(
+async function searchTmdbCandidates(
   title: string,
-  year: string,
-): Promise<TmdbMatch | null> {
-  const token =
-    process.env
-      .TMDB_READ_ACCESS_TOKEN;
 
-  if (!token) {
-    return null;
+  year:
+    string | null,
+): Promise<
+  TmdbSearchCandidate[]
+> {
+  const token =
+    getTmdbToken();
+
+  const params =
+    new URLSearchParams({
+      query:
+        title,
+
+      include_adult:
+        "false",
+
+      language:
+        "en-US",
+    });
+
+  if (
+    year &&
+    /^\d{4}$/.test(
+      year,
+    )
+  ) {
+    params.set(
+      "primary_release_year",
+      year,
+    );
   }
 
+  const response =
+    await fetch(
+      `https://api.themoviedb.org/3/search/movie?${params.toString()}`,
+      {
+        headers: {
+          Authorization:
+            `Bearer ${token}`,
+
+          accept:
+            "application/json",
+        },
+
+        cache:
+          "no-store",
+      },
+    );
+
+  if (
+    !response.ok
+  ) {
+    throw new Error(
+      `TMDB movie search failed with status ${response.status}.`,
+    );
+  }
+
+  const data:
+    TmdbSearchResponse =
+    await response.json();
+
+  return (
+    data.results ??
+    []
+  );
+}
+
+async function fetchTmdbMovieDetails(
+  tmdbId: number,
+): Promise<
+  TmdbMovieDetails | null
+> {
   try {
-    const params =
-      new URLSearchParams({
-        query: title,
-        include_adult:
-          "false",
-        language:
-          "en-US",
-      });
+    const token =
+      getTmdbToken();
 
-    if (
-      /^\d{4}$/.test(year)
-    ) {
-      params.set(
-        "primary_release_year",
-        year,
-      );
-    }
-
-    const searchResponse =
+    const response =
       await fetch(
-        `https://api.themoviedb.org/3/search/movie?${params.toString()}`,
+        `https://api.themoviedb.org/3/movie/${tmdbId}?language=en-US`,
         {
           headers: {
             Authorization:
@@ -263,122 +1099,16 @@ async function findTmdbMovie(
       );
 
     if (
-      !searchResponse.ok
+      !response.ok
     ) {
       return null;
     }
 
-    const searchData:
-      TmdbSearchResponse =
-      await searchResponse.json();
-
-    const match =
-      searchData.results[0];
-
-    if (!match) {
-      return null;
-    }
-
-    const releaseResponse =
-      await fetch(
-        `https://api.themoviedb.org/3/movie/${match.id}/release_dates`,
-        {
-          headers: {
-            Authorization:
-              `Bearer ${token}`,
-
-            accept:
-              "application/json",
-          },
-
-          cache:
-            "no-store",
-        },
-      );
-
-    let theatricalRelease:
-      ReleaseMatch | null =
-      null;
-
-    let digitalRelease:
-      ReleaseMatch | null =
-      null;
-
-    let physicalRelease:
-      ReleaseMatch | null =
-      null;
-
-    if (
-      releaseResponse.ok
-    ) {
-      const releaseData:
-        TmdbReleaseDatesResponse =
-        await releaseResponse.json();
-
-      // TMDB release types:
-      // 2 = Theatrical (Limited)
-      // 3 = Theatrical
-      // 4 = Digital
-      // 5 = Physical
-
-      theatricalRelease =
-        firstReleaseForType(
-          releaseData,
-          3,
-        ) ??
-        firstReleaseForType(
-          releaseData,
-          2,
-        );
-
-      digitalRelease =
-        firstReleaseForType(
-          releaseData,
-          4,
-        );
-
-      physicalRelease =
-        firstReleaseForType(
-          releaseData,
-          5,
-        );
-    }
-
-    return {
-      id:
-        match.id,
-
-      posterPath:
-        match.poster_path ??
-        null,
-
-      theatricalReleaseDate:
-        theatricalRelease
-          ?.date ?? null,
-
-      theatricalReleaseRegion:
-        theatricalRelease
-          ?.region ?? null,
-
-      digitalReleaseDate:
-        digitalRelease
-          ?.date ?? null,
-
-      digitalReleaseRegion:
-        digitalRelease
-          ?.region ?? null,
-
-      physicalReleaseDate:
-        physicalRelease
-          ?.date ?? null,
-
-      physicalReleaseRegion:
-        physicalRelease
-          ?.region ?? null,
-    };
+    return await response.json() as
+      TmdbMovieDetails;
   } catch (error) {
     console.error(
-      "TMDB movie lookup failed:",
+      `TMDB detail lookup failed for ${tmdbId}:`,
       error,
     );
 
@@ -386,17 +1116,1504 @@ async function findTmdbMovie(
   }
 }
 
-function getRelevantRelease(
-  signal: Signal,
-  tmdbMatch:
-    TmdbMatch | null,
-): ReleaseMatch | null {
-  if (!tmdbMatch) {
+async function buildAiCandidate(
+  candidate:
+    TmdbSearchCandidate,
+): Promise<
+  AiMatchCandidate
+> {
+  const details =
+    await fetchTmdbMovieDetails(
+      candidate.id,
+    );
+
+  const productionCountries =
+    details
+      ?.production_countries
+      ?.map(
+        (country) =>
+          country.iso_3166_1,
+      )
+      .filter(
+        Boolean,
+      ) ??
+    [];
+
+  const originCountries =
+    details
+      ?.origin_country
+      ?.length
+      ? details
+          .origin_country
+      : productionCountries.length
+        ? productionCountries
+        : candidate
+            .origin_country ??
+          [];
+
+  const releaseDate =
+    details
+      ?.release_date ??
+    candidate
+      .release_date ??
+    null;
+
+  return {
+    tmdbId:
+      candidate.id,
+
+    title:
+      details?.title ??
+      candidate.title,
+
+    originalTitle:
+      details
+        ?.original_title ??
+      candidate
+        .original_title ??
+      null,
+
+    year:
+      releaseDate &&
+      /^\d{4}/.test(
+        releaseDate,
+      )
+        ? releaseDate.slice(
+            0,
+            4,
+          )
+        : null,
+
+    overview:
+      details?.overview ??
+      candidate.overview ??
+      null,
+
+    originalLanguage:
+      details
+        ?.original_language ??
+      candidate
+        .original_language ??
+      null,
+
+    originCountries,
+
+    genres:
+      details
+        ?.genres
+        ?.map(
+          (genre) =>
+            genre.name,
+        ) ??
+      [],
+
+    runtime:
+      details?.runtime ??
+      null,
+
+    imdbId:
+      details?.imdb_id ??
+      null,
+
+    releaseDate,
+  };
+}
+
+async function tryAiMatchFallback({
+  evidence,
+
+  candidates,
+}: {
+  evidence:
+    SourceMatchEvidence;
+
+  candidates:
+    TmdbSearchCandidate[];
+}): Promise<
+  AiFallbackResult
+> {
+  /*
+   * AI is optional.
+   *
+   * If the API key is not configured,
+   * ingestion falls back to the normal
+   * Match Review workflow instead of
+   * failing.
+   */
+  if (
+    !process.env
+      .GEMINI_API_KEY
+  ) {
+    return {
+      selectedCandidate:
+        null,
+
+      confidence:
+        null,
+
+      details:
+        null,
+    };
+  }
+
+  if (
+    candidates.length ===
+    0
+  ) {
+    return {
+      selectedCandidate:
+        null,
+
+      confidence:
+        null,
+
+      details:
+        null,
+    };
+  }
+
+  try {
+    const limitedCandidates =
+      candidates.slice(
+        0,
+        AI_MAX_CANDIDATES,
+      );
+
+    /*
+     * Retrieve richer TMDB metadata only
+     * for candidates that actually require
+     * AI disambiguation.
+     */
+    const aiCandidates:
+      AiMatchCandidate[] =
+      [];
+
+    for (
+      const candidate of
+      limitedCandidates
+    ) {
+      aiCandidates.push(
+        await buildAiCandidate(
+          candidate,
+        ),
+      );
+    }
+
+    const aiResult =
+      await verifyMovieMatchWithAI({
+        sourceTitle:
+          evidence.sourceTitle,
+
+        normalizedTitle:
+          evidence
+            .normalizedTitle,
+
+        year:
+          /^\d{4}$/.test(
+            evidence.year,
+          )
+            ? evidence.year
+            : null,
+
+        description:
+          evidence
+            .description
+            .trim()
+            ? evidence.description
+            : null,
+
+        country:
+          evidence.country ===
+          "Unknown"
+            ? null
+            : evidence.country,
+
+        genres:
+          splitCommaList(
+            evidence.genres,
+          ),
+
+        audioLanguage:
+          evidence
+            .audioLanguage
+            .trim()
+            ? evidence
+                .audioLanguage
+            : null,
+
+        detectionType:
+          evidence.signal,
+
+        quality:
+          evidence.quality ===
+          "Unknown"
+            ? null
+            : evidence.quality,
+
+        candidates:
+          aiCandidates,
+      });
+
+    const diagnostic =
+      `Gemini ${aiResult.decision} at ${aiResult.confidence}% confidence: ${aiResult.reason}`;
+
+    /*
+     * Gemini is advisory unless ALL
+     * automatic-match conditions pass.
+     */
+    if (
+      aiResult.decision !==
+      "MATCH"
+    ) {
+      return {
+        selectedCandidate:
+          null,
+
+        confidence:
+          aiResult.confidence,
+
+        details:
+          diagnostic,
+      };
+    }
+
+    if (
+      aiResult.confidence <
+      AI_AUTO_MATCH_CONFIDENCE
+    ) {
+      return {
+        selectedCandidate:
+          null,
+
+        confidence:
+          aiResult.confidence,
+
+        details:
+          `${diagnostic} Automatic match requires at least ${AI_AUTO_MATCH_CONFIDENCE}% confidence.`,
+      };
+    }
+
+    if (
+      !aiResult
+        .selectedCandidate
+    ) {
+      return {
+        selectedCandidate:
+          null,
+
+        confidence:
+          aiResult.confidence,
+
+        details:
+          `${diagnostic} Gemini did not select a valid supplied candidate.`,
+      };
+    }
+
+    /*
+     * Safety guard #1:
+     *
+     * Gemini may select only a TMDB ID that
+     * our own TMDB search actually supplied.
+     */
+    const selectedCandidate =
+      limitedCandidates.find(
+        (candidate) =>
+          candidate.id ===
+          aiResult
+            .selectedCandidate
+            ?.tmdbId,
+      );
+
+    if (
+      !selectedCandidate
+    ) {
+      return {
+        selectedCandidate:
+          null,
+
+        confidence:
+          aiResult.confidence,
+
+        details:
+          `${diagnostic} The selected TMDB ID was not present in the supplied candidate set.`,
+      };
+    }
+
+    /*
+     * Safety guard #2:
+     *
+     * A large source/TMDB year discrepancy
+     * cannot be automatically overridden by
+     * AI.
+     */
+    const selectedCandidateYear =
+      getCandidateYear(
+        selectedCandidate,
+      );
+
+    if (
+      !isAiCandidateYearAcceptable(
+        evidence.year,
+
+        selectedCandidateYear,
+      )
+    ) {
+      return {
+        selectedCandidate:
+          null,
+
+        confidence:
+          aiResult.confidence,
+
+        details:
+          `${diagnostic} Automatic match was blocked because the selected candidate year differs too far from the CinemaCity year.`,
+      };
+    }
+
+    return {
+      selectedCandidate,
+
+      confidence:
+        aiResult.confidence,
+
+      details:
+        diagnostic,
+    };
+  } catch (error) {
+    /*
+     * Gemini failure must NEVER take down
+     * CinemaCity ingestion.
+     *
+     * The item simply falls back to manual
+     * review.
+     */
+    console.error(
+      "Gemini movie verification failed:",
+      error,
+    );
+
+    return {
+      selectedCandidate:
+        null,
+
+      confidence:
+        null,
+
+      details:
+        error instanceof
+        Error
+          ? `Gemini verification was unavailable: ${error.message}`
+          : "Gemini verification was unavailable.",
+    };
+  }
+}
+
+function buildCandidateDetails(
+  score:
+    TmdbCandidateScore,
+) {
+  const title =
+    score.candidate.title;
+
+  const year =
+    score.candidateYear ??
+    "year unavailable";
+
+  const description =
+    score.descriptionSimilarity >
+    0
+      ? `, description ${Math.round(
+          score
+            .descriptionSimilarity *
+            100,
+        )}%`
+      : "";
+
+  return `"${title}" (${year}), confidence ${score.confidence}%${description}`;
+}
+
+function buildAmbiguousResult(
+  best:
+    TmdbCandidateScore,
+
+  second:
+    TmdbCandidateScore | null,
+
+  details:
+    string,
+): TmdbLookupResult {
+  return {
+    match:
+      null,
+
+    reviewReason:
+      "AMBIGUOUS",
+
+    candidateTmdbId:
+      best.candidate.id,
+
+    candidateTitle:
+      best.candidate.title,
+
+    candidateYear:
+      best.candidateYear,
+
+    confidence:
+      best.confidence,
+
+    details:
+      second
+        ? `${details} Best: ${buildCandidateDetails(
+            best,
+          )}. Second: ${buildCandidateDetails(
+            second,
+          )}.`
+        : `${details} Best: ${buildCandidateDetails(
+            best,
+          )}.`,
+  };
+}
+
+/*
+ * Description is still allowed to solve
+ * an ambiguity before AI is called.
+ */
+function chooseByDescription(
+  candidates:
+    TmdbCandidateScore[],
+) {
+  const sorted =
+    [...candidates].sort(
+      (
+        a,
+        b,
+      ) =>
+        b.descriptionSimilarity -
+        a.descriptionSimilarity,
+    );
+
+  const best =
+    sorted[0];
+
+  const second =
+    sorted[1];
+
+  if (
+    !best
+  ) {
     return null;
   }
 
   if (
-    signal === "CAM" &&
+    best.descriptionSimilarity <
+    DESCRIPTION_MATCH_THRESHOLD
+  ) {
+    return null;
+  }
+
+  if (
+    second &&
+    best.descriptionSimilarity -
+      second.descriptionSimilarity <
+      DESCRIPTION_AMBIGUITY_GAP
+  ) {
+    return null;
+  }
+
+  return best;
+}
+
+function chooseCandidate(
+  title: string,
+
+  year: string,
+
+  candidates:
+    TmdbCandidateScore[],
+): {
+  chosen:
+    TmdbCandidateScore | null;
+
+  review:
+    TmdbLookupResult | null;
+} {
+  const plausible =
+    candidates.filter(
+      (candidate) =>
+        candidate
+          .titleSimilarity >=
+        TITLE_MATCH_THRESHOLD,
+    );
+
+  if (
+    plausible.length ===
+    0
+  ) {
+    const best =
+      candidates[0];
+
+    if (
+      !best
+    ) {
+      return {
+        chosen:
+          null,
+
+        review: {
+          match:
+            null,
+
+          reviewReason:
+            "UNMATCHED",
+
+          candidateTmdbId:
+            null,
+
+          candidateTitle:
+            null,
+
+          candidateYear:
+            null,
+
+          confidence:
+            null,
+
+          details:
+            `TMDB returned no movie candidates for "${title}"${
+              /^\d{4}$/.test(
+                year,
+              )
+                ? ` (${year})`
+                : ""
+            }.`,
+        },
+      };
+    }
+
+    return {
+      chosen:
+        null,
+
+      review: {
+        match:
+          null,
+
+        reviewReason:
+          "TITLE_MISMATCH",
+
+        candidateTmdbId:
+          best.candidate.id,
+
+        candidateTitle:
+          best.candidate.title,
+
+        candidateYear:
+          best.candidateYear,
+
+        confidence:
+          best.confidence,
+
+        details:
+          `Best TMDB candidate does not match the CinemaCity title closely enough: ${buildCandidateDetails(
+            best,
+          )}.`,
+      },
+    };
+  }
+
+  const hasValidYear =
+    /^\d{4}$/.test(
+      year,
+    );
+
+  if (
+    hasValidYear
+  ) {
+    /*
+     * PRIORITY 1:
+     *
+     * Exact title + exact year.
+     */
+    const exactTitleExactYear =
+      plausible.filter(
+        (candidate) =>
+          candidate.exactTitle &&
+          candidate.candidateYear ===
+            year,
+      );
+
+    if (
+      exactTitleExactYear.length ===
+      1
+    ) {
+      return {
+        chosen:
+          exactTitleExactYear[0],
+
+        review:
+          null,
+      };
+    }
+
+    if (
+      exactTitleExactYear.length >
+      1
+    ) {
+      const descriptionWinner =
+        chooseByDescription(
+          exactTitleExactYear,
+        );
+
+      if (
+        descriptionWinner
+      ) {
+        return {
+          chosen:
+            descriptionWinner,
+
+          review:
+            null,
+        };
+      }
+
+      const sorted =
+        [...exactTitleExactYear]
+          .sort(
+            (
+              a,
+              b,
+            ) =>
+              b.descriptionSimilarity -
+                a.descriptionSimilarity ||
+              b.confidence -
+                a.confidence,
+          );
+
+      return {
+        chosen:
+          null,
+
+        review:
+          buildAmbiguousResult(
+            sorted[0],
+
+            sorted[1] ??
+              null,
+
+            `Multiple exact-title TMDB records share the CinemaCity year ${year}, and the available description does not distinguish them strongly enough.`,
+          ),
+      };
+    }
+
+    /*
+     * PRIORITY 2:
+     *
+     * Same-year candidates.
+     */
+    const sameYear =
+      plausible
+        .filter(
+          (candidate) =>
+            candidate
+              .candidateYear ===
+            year,
+        )
+        .sort(
+          (
+            a,
+            b,
+          ) =>
+            b.confidence -
+            a.confidence,
+        );
+
+    if (
+      sameYear.length ===
+      1
+    ) {
+      return {
+        chosen:
+          sameYear[0],
+
+        review:
+          null,
+      };
+    }
+
+    if (
+      sameYear.length >
+      1
+    ) {
+      const descriptionWinner =
+        chooseByDescription(
+          sameYear,
+        );
+
+      if (
+        descriptionWinner
+      ) {
+        return {
+          chosen:
+            descriptionWinner,
+
+          review:
+            null,
+        };
+      }
+
+      const best =
+        sameYear[0];
+
+      const second =
+        sameYear[1];
+
+      if (
+        best.confidence -
+          second.confidence >
+        AMBIGUITY_GAP
+      ) {
+        return {
+          chosen:
+            best,
+
+          review:
+            null,
+        };
+      }
+
+      return {
+        chosen:
+          null,
+
+        review:
+          buildAmbiguousResult(
+            best,
+
+            second,
+
+            `Multiple plausible TMDB candidates share the reported year ${year}.`,
+          ),
+      };
+    }
+
+    /*
+     * PRIORITY 3:
+     *
+     * Exact title but adjacent year.
+     */
+    const adjacentExactTitle =
+      plausible
+        .filter(
+          (
+            candidate,
+          ) => {
+            if (
+              !candidate.exactTitle
+            ) {
+              return false;
+            }
+
+            const difference =
+              getYearDifference(
+                year,
+
+                candidate
+                  .candidateYear,
+              );
+
+            return (
+              difference ===
+              1
+            );
+          },
+        )
+        .sort(
+          (
+            a,
+            b,
+          ) =>
+            b.confidence -
+            a.confidence,
+        );
+
+    if (
+      adjacentExactTitle.length ===
+      1
+    ) {
+      return {
+        chosen:
+          adjacentExactTitle[0],
+
+        review:
+          null,
+      };
+    }
+
+    if (
+      adjacentExactTitle.length >
+      1
+    ) {
+      const descriptionWinner =
+        chooseByDescription(
+          adjacentExactTitle,
+        );
+
+      if (
+        descriptionWinner
+      ) {
+        return {
+          chosen:
+            descriptionWinner,
+
+          review:
+            null,
+        };
+      }
+
+      const best =
+        adjacentExactTitle[0];
+
+      const second =
+        adjacentExactTitle[1];
+
+      if (
+        best.confidence -
+          second.confidence >
+        AMBIGUITY_GAP
+      ) {
+        return {
+          chosen:
+            best,
+
+          review:
+            null,
+        };
+      }
+
+      return {
+        chosen:
+          null,
+
+        review:
+          buildAmbiguousResult(
+            best,
+
+            second,
+
+            `Multiple exact-title TMDB candidates fall within one year of CinemaCity's reported year ${year}.`,
+          ),
+      };
+    }
+
+    const best =
+      plausible[0];
+
+    const difference =
+      getYearDifference(
+        year,
+
+        best.candidateYear,
+      );
+
+    return {
+      chosen:
+        null,
+
+      review:
+        buildAmbiguousResult(
+          best,
+
+          plausible[1] ??
+            null,
+
+          difference ===
+          null
+            ? `The title looks plausible, but TMDB does not provide enough year information to verify it against CinemaCity year ${year}.`
+            : `The closest TMDB candidate differs from CinemaCity year ${year} by ${difference} years.`,
+        ),
+    };
+  }
+
+  /*
+   * No reliable CinemaCity year.
+   */
+  const exactTitles =
+    plausible.filter(
+      (candidate) =>
+        candidate.exactTitle,
+    );
+
+  if (
+    exactTitles.length ===
+    1
+  ) {
+    return {
+      chosen:
+        exactTitles[0],
+
+      review:
+        null,
+    };
+  }
+
+  if (
+    exactTitles.length >
+    1
+  ) {
+    const descriptionWinner =
+      chooseByDescription(
+        exactTitles,
+      );
+
+    if (
+      descriptionWinner
+    ) {
+      return {
+        chosen:
+          descriptionWinner,
+
+        review:
+          null,
+      };
+    }
+  }
+
+  const sorted =
+    [...plausible].sort(
+      (
+        a,
+        b,
+      ) =>
+        b.confidence -
+        a.confidence,
+    );
+
+  const best =
+    sorted[0];
+
+  const second =
+    sorted[1];
+
+  if (
+    !second ||
+    best.confidence -
+      second.confidence >
+      AMBIGUITY_GAP
+  ) {
+    return {
+      chosen:
+        best,
+
+      review:
+        null,
+    };
+  }
+
+  return {
+    chosen:
+      null,
+
+    review:
+      buildAmbiguousResult(
+        best,
+
+        second,
+
+        "CinemaCity did not provide a reliable year and multiple TMDB candidates remain plausible.",
+      ),
+  };
+}
+
+async function fetchReleaseDatesForCandidate(
+  candidate:
+    TmdbSearchCandidate,
+
+  confidence:
+    number,
+): Promise<
+  TmdbLookupResult
+> {
+  const token =
+    getTmdbToken();
+
+  const releaseResponse =
+    await fetch(
+      `https://api.themoviedb.org/3/movie/${candidate.id}/release_dates`,
+      {
+        headers: {
+          Authorization:
+            `Bearer ${token}`,
+
+          accept:
+            "application/json",
+        },
+
+        cache:
+          "no-store",
+      },
+    );
+
+  if (
+    !releaseResponse.ok
+  ) {
+    console.error(
+      `TMDB release-date lookup failed for ${candidate.title} with status ${releaseResponse.status}.`,
+    );
+
+    return {
+      match:
+        null,
+
+      reviewReason:
+        null,
+
+      candidateTmdbId:
+        candidate.id,
+
+      candidateTitle:
+        candidate.title,
+
+      candidateYear:
+        getCandidateYear(
+          candidate,
+        ),
+
+      confidence,
+
+      details:
+        `TMDB release-date request failed with status ${releaseResponse.status}.`,
+    };
+  }
+
+  const releaseData:
+    TmdbReleaseDatesResponse =
+    await releaseResponse.json();
+
+  /*
+   * TMDB release types:
+   *
+   * 2 = Theatrical (Limited)
+   * 3 = Theatrical
+   * 4 = Digital
+   * 5 = Physical
+   */
+  const theatricalRelease =
+    firstReleaseForType(
+      releaseData,
+      3,
+    ) ??
+    firstReleaseForType(
+      releaseData,
+      2,
+    );
+
+  const digitalRelease =
+    firstReleaseForType(
+      releaseData,
+      4,
+    );
+
+  const physicalRelease =
+    firstReleaseForType(
+      releaseData,
+      5,
+    );
+
+  return {
+    match: {
+      id:
+        candidate.id,
+
+      matchedTitle:
+        candidate.title,
+
+      matchedYear:
+        getCandidateYear(
+          candidate,
+        ),
+
+      confidence,
+
+      posterPath:
+        candidate
+          .poster_path ??
+        null,
+
+      theatricalReleaseDate:
+        theatricalRelease
+          ?.date ??
+        null,
+
+      theatricalReleaseRegion:
+        theatricalRelease
+          ?.region ??
+        null,
+
+      digitalReleaseDate:
+        digitalRelease
+          ?.date ??
+        null,
+
+      digitalReleaseRegion:
+        digitalRelease
+          ?.region ??
+        null,
+
+      physicalReleaseDate:
+        physicalRelease
+          ?.date ??
+        null,
+
+      physicalReleaseRegion:
+        physicalRelease
+          ?.region ??
+        null,
+    },
+
+    reviewReason:
+      null,
+
+    candidateTmdbId:
+      candidate.id,
+
+    candidateTitle:
+      candidate.title,
+
+    candidateYear:
+      getCandidateYear(
+        candidate,
+      ),
+
+    confidence,
+
+    details:
+      null,
+  };
+}
+
+async function findTmdbMovie({
+  sourceTitle,
+
+  normalizedTitle,
+
+  year,
+
+  description,
+
+  country,
+
+  genres,
+
+  audioLanguage,
+
+  signal,
+
+  quality,
+}: SourceMatchEvidence): Promise<
+  TmdbLookupResult
+> {
+  try {
+    const validYear =
+      /^\d{4}$/.test(
+        year,
+      )
+        ? year
+        : null;
+
+    /*
+     * First search with the reported year.
+     */
+    const yearCandidates =
+      await searchTmdbCandidates(
+        normalizedTitle,
+
+        validYear,
+      );
+
+    /*
+     * Also search broadly.
+     *
+     * This allows:
+     *
+     * - alternate release years
+     * - translated/localized metadata
+     * - broader candidate discovery
+     */
+    const broadCandidates =
+      validYear
+        ? await searchTmdbCandidates(
+            normalizedTitle,
+
+            null,
+          )
+        : [];
+
+    const candidates =
+      dedupeCandidates([
+        ...yearCandidates,
+        ...broadCandidates,
+      ]);
+
+    const scoredCandidates =
+      candidates
+        .map(
+          (
+            candidate,
+          ) =>
+            calculateCandidateScore(
+              normalizedTitle,
+
+              year,
+
+              description,
+
+              candidate,
+            ),
+        )
+        .sort(
+          (
+            a,
+            b,
+          ) => {
+            if (
+              validYear
+            ) {
+              const aExactYear =
+                a.candidateYear ===
+                validYear;
+
+              const bExactYear =
+                b.candidateYear ===
+                validYear;
+
+              if (
+                aExactYear !==
+                bExactYear
+              ) {
+                return aExactYear
+                  ? -1
+                  : 1;
+              }
+            }
+
+            if (
+              a.exactTitle !==
+              b.exactTitle
+            ) {
+              return a.exactTitle
+                ? -1
+                : 1;
+            }
+
+            return (
+              b.confidence -
+              a.confidence
+            );
+          },
+        );
+
+    /*
+     * Step 1:
+     *
+     * Let deterministic matching decide
+     * first.
+     */
+    const selection =
+      chooseCandidate(
+        normalizedTitle,
+
+        year,
+
+        scoredCandidates,
+      );
+
+    let selectedCandidate =
+      selection.chosen
+        ?.candidate ??
+      null;
+
+    let selectedConfidence =
+      selection.chosen
+        ?.confidence ??
+      null;
+
+    /*
+     * Step 2:
+     *
+     * If deterministic matching cannot
+     * safely decide, Gemini gets one chance
+     * to resolve the identity.
+     */
+    if (
+      selection.review
+    ) {
+      const aiFallback =
+        await tryAiMatchFallback({
+          evidence: {
+            sourceTitle,
+
+            normalizedTitle,
+
+            year,
+
+            description,
+
+            country,
+
+            genres,
+
+            audioLanguage,
+
+            signal,
+
+            quality,
+          },
+
+          candidates:
+            scoredCandidates.map(
+              (score) =>
+                score.candidate,
+            ),
+        });
+
+      /*
+       * High-confidence Gemini match:
+       *
+       * continue through the exact same
+       * release-date/detection pipeline as
+       * a deterministic match.
+       */
+      if (
+        aiFallback
+          .selectedCandidate
+      ) {
+        selectedCandidate =
+          aiFallback
+            .selectedCandidate;
+
+        selectedConfidence =
+          aiFallback
+            .confidence ??
+          100;
+      } else {
+        /*
+         * Gemini did not meet our automatic
+         * threshold.
+         *
+         * Keep the item in Match Review and
+         * attach Gemini's reasoning to the
+         * diagnostic.
+         */
+        return {
+          ...selection.review,
+
+          details:
+            combineDetails(
+              selection
+                .review
+                .details,
+
+              aiFallback
+                .details,
+            ),
+        };
+      }
+    }
+
+    if (
+      !selectedCandidate
+    ) {
+      return {
+        match:
+          null,
+
+        reviewReason:
+          "UNMATCHED",
+
+        candidateTmdbId:
+          null,
+
+        candidateTitle:
+          null,
+
+        candidateYear:
+          null,
+
+        confidence:
+          null,
+
+        details:
+          `No verified TMDB movie identity was selected for "${normalizedTitle}".`,
+      };
+    }
+
+    /*
+     * Step 3:
+     *
+     * AI never creates release metadata.
+     *
+     * Release dates still come directly
+     * from TMDB.
+     */
+    return await fetchReleaseDatesForCandidate(
+      selectedCandidate,
+
+      selectedConfidence ??
+        100,
+    );
+  } catch (error) {
+    console.error(
+      "TMDB movie lookup failed:",
+      error,
+    );
+
+    /*
+     * Network/configuration failures are
+     * not title-match failures.
+     */
+    return {
+      match:
+        null,
+
+      reviewReason:
+        null,
+
+      candidateTmdbId:
+        null,
+
+      candidateTitle:
+        null,
+
+      candidateYear:
+        null,
+
+      confidence:
+        null,
+
+      details:
+        error instanceof
+        Error
+          ? error.message
+          : "Unknown TMDB lookup error.",
+    };
+  }
+}
+
+function getRelevantRelease(
+  signal: Signal,
+
+  tmdbMatch:
+    TmdbMatch | null,
+): ReleaseMatch | null {
+  if (
+    !tmdbMatch
+  ) {
+    return null;
+  }
+
+  if (
+    signal ===
+      "CAM" &&
     tmdbMatch
       .theatricalReleaseDate &&
     tmdbMatch
@@ -414,7 +2631,8 @@ function getRelevantRelease(
   }
 
   if (
-    signal === "WEB" &&
+    signal ===
+      "WEB" &&
     tmdbMatch
       .digitalReleaseDate &&
     tmdbMatch
@@ -435,7 +2653,8 @@ function getRelevantRelease(
 }
 
 function getLatestFeedItem(
-  items: RawFeedItem[],
+  items:
+    RawFeedItem[],
 ) {
   let latestTimestamp =
     Number.NEGATIVE_INFINITY;
@@ -452,10 +2671,13 @@ function getLatestFeedItem(
     (item) => {
       const publishedAt =
         String(
-          item.pubDate ?? "",
+          item.pubDate ??
+            "",
         ).trim();
 
-      if (!publishedAt) {
+      if (
+        !publishedAt
+      ) {
         return;
       }
 
@@ -465,7 +2687,8 @@ function getLatestFeedItem(
         );
 
       const timestamp =
-        parsedDate.getTime();
+        parsedDate
+          .getTime();
 
       if (
         Number.isNaN(
@@ -483,12 +2706,15 @@ function getLatestFeedItem(
           timestamp;
 
         latestPublishedAt =
-          parsedDate.toISOString();
+          parsedDate
+            .toISOString();
 
         latestTitle =
-          String(
-            item.title ??
-              "Unknown title",
+          decodeHtmlEntities(
+            String(
+              item.title ??
+                "Unknown title",
+            ),
           );
       }
     },
@@ -505,15 +2731,21 @@ function getLatestFeedItem(
 
 async function recordSuccessSafely({
   checkedAt,
+
   latestItemPublishedAt,
+
   latestItemTitle,
+
   itemCount,
 }: {
   checkedAt: string;
+
   latestItemPublishedAt:
     string | null;
+
   latestItemTitle:
     string | null;
+
   itemCount: number;
 }) {
   try {
@@ -524,6 +2756,7 @@ async function recordSuccessSafely({
       checkedAt,
 
       latestItemPublishedAt,
+
       latestItemTitle,
 
       itemCount,
@@ -538,10 +2771,14 @@ async function recordSuccessSafely({
 
 async function recordFailureSafely({
   checkedAt,
+
   error,
 }: {
-  checkedAt: string;
-  error: string;
+  checkedAt:
+    string;
+
+  error:
+    string;
 }) {
   try {
     await recordFeedFailure({
@@ -549,6 +2786,7 @@ async function recordFailureSafely({
         FEED_SOURCE,
 
       checkedAt,
+
       error,
     });
   } catch (
@@ -559,6 +2797,247 @@ async function recordFailureSafely({
       statusError,
     );
   }
+}
+
+async function saveReviewSafely({
+  sourceUrl,
+
+  sourceTitle,
+
+  normalizedTitle,
+
+  year,
+
+  quality,
+
+  signal,
+
+  publishedAt,
+
+  sourceDescription,
+
+  sourceCountry,
+
+  sourceGenres,
+
+  sourceAudioLanguage,
+
+  sourceSubtitleLanguage,
+
+  reason,
+
+  candidateTmdbId,
+
+  candidateTitle,
+
+  candidateYear,
+
+  confidence,
+
+  details,
+}: {
+  sourceUrl: string;
+
+  sourceTitle: string;
+
+  normalizedTitle: string;
+
+  year: string;
+
+  quality: string;
+
+  signal:
+    | "CAM"
+    | "WEB";
+
+  publishedAt: string;
+
+  sourceDescription: string;
+
+  sourceCountry: string;
+
+  sourceGenres: string;
+
+  sourceAudioLanguage: string;
+
+  sourceSubtitleLanguage: string;
+
+  reason:
+    MatchReviewReason;
+
+  candidateTmdbId:
+    number | null;
+
+  candidateTitle:
+    string | null;
+
+  candidateYear:
+    string | null;
+
+  confidence:
+    number | null;
+
+  details:
+    string | null;
+}) {
+  try {
+    await saveMatchReview({
+      source:
+        FEED_SOURCE,
+
+      sourceUrl,
+
+      sourceTitle,
+
+      normalizedTitle,
+
+      year:
+        year ===
+        "Unknown"
+          ? null
+          : year,
+
+      quality:
+        quality ===
+        "Unknown"
+          ? null
+          : quality,
+
+      detectionType:
+        signal,
+
+      publishedAt:
+        publishedAt ===
+        "Unknown"
+          ? null
+          : publishedAt,
+
+      sourceDescription:
+        sourceDescription.trim()
+          ? sourceDescription
+          : null,
+
+      sourceCountry:
+        sourceCountry ===
+        "Unknown"
+          ? null
+          : sourceCountry,
+
+      sourceGenres:
+        sourceGenres.trim()
+          ? sourceGenres
+          : null,
+
+      sourceAudioLanguage:
+        sourceAudioLanguage.trim()
+          ? sourceAudioLanguage
+          : null,
+
+      sourceSubtitleLanguage:
+        sourceSubtitleLanguage.trim()
+          ? sourceSubtitleLanguage
+          : null,
+
+      reason,
+
+      candidateTmdbId,
+
+      candidateTitle,
+
+      candidateYear,
+
+      confidence,
+
+      details,
+    });
+  } catch (error) {
+    console.error(
+      "CinemaCity match review could not be saved:",
+      error,
+    );
+  }
+}
+
+function createEmptyMovie({
+  title,
+
+  normalizedTitle,
+
+  quality,
+
+  signal,
+
+  year,
+
+  country,
+
+  publishedAt,
+
+  sourceUrl,
+}: {
+  title: string;
+
+  normalizedTitle: string;
+
+  quality: string;
+
+  signal: Signal;
+
+  year: string;
+
+  country: string;
+
+  publishedAt: string;
+
+  sourceUrl: string;
+}): CinemaCityMovie {
+  return {
+    title,
+
+    normalizedTitle,
+
+    tmdbId:
+      null,
+
+    posterPath:
+      null,
+
+    theatricalReleaseDate:
+      null,
+
+    theatricalReleaseRegion:
+      null,
+
+    digitalReleaseDate:
+      null,
+
+    digitalReleaseRegion:
+      null,
+
+    physicalReleaseDate:
+      null,
+
+    physicalReleaseRegion:
+      null,
+
+    tmdbReleaseDate:
+      null,
+
+    tmdbReleaseRegion:
+      null,
+
+    quality,
+
+    signal,
+
+    year,
+
+    country,
+
+    publishedAt,
+
+    sourceUrl,
+  };
 }
 
 export async function getCinemaCityMovies(): Promise<
@@ -577,7 +3056,7 @@ export async function getCinemaCityMovies(): Promise<
         {
           headers: {
             "User-Agent":
-              "ShadowWindow/1.0",
+              "WatchLeaks/1.0",
           },
 
           cache:
@@ -585,7 +3064,9 @@ export async function getCinemaCityMovies(): Promise<
         },
       );
 
-    if (!response.ok) {
+    if (
+      !response.ok
+    ) {
       const checkedAt =
         new Date()
           .toISOString();
@@ -615,7 +3096,8 @@ export async function getCinemaCityMovies(): Promise<
       parsedFeed
         ?.rss
         ?.channel
-        ?.item ?? [];
+        ?.item ??
+      [];
 
     const items:
       RawFeedItem[] =
@@ -623,9 +3105,12 @@ export async function getCinemaCityMovies(): Promise<
         rawItems,
       )
         ? rawItems
-        : [rawItems];
+        : [
+            rawItems,
+          ];
 
-    feedLoaded = true;
+    feedLoaded =
+      true;
 
     const latestFeedItem =
       getLatestFeedItem(
@@ -652,11 +3137,27 @@ export async function getCinemaCityMovies(): Promise<
     const movies =
       await Promise.all(
         items.map(
-          async (item) => {
+          async (
+            item,
+          ) => {
+            /*
+             * Decode entities before title
+             * matching.
+             *
+             * Example:
+             *
+             * &#039;
+             *
+             * becomes:
+             *
+             * '
+             */
             const title =
-              String(
-                item.title ??
-                  "Unknown title",
+              decodeHtmlEntities(
+                String(
+                  item.title ??
+                    "Unknown title",
+                ),
               );
 
             const normalizedTitle =
@@ -677,9 +3178,11 @@ export async function getCinemaCityMovies(): Promise<
               );
 
             const country =
-              String(
-                item.country ??
-                  "Unknown",
+              decodeHtmlEntities(
+                String(
+                  item.country ??
+                    "Unknown",
+                ),
               );
 
             const publishedAt =
@@ -694,20 +3197,181 @@ export async function getCinemaCityMovies(): Promise<
                   "",
               );
 
+            const description =
+              decodeHtmlEntities(
+                String(
+                  item.description ??
+                    "",
+                ),
+              ).trim();
+
+            const genres =
+              decodeHtmlEntities(
+                String(
+                  item.genre ??
+                    "",
+                ),
+              ).trim();
+
+            const audioLanguage =
+              decodeHtmlEntities(
+                String(
+                  item.audioLanguage ??
+                    "",
+                ),
+              ).trim();
+
+            const subtitleLanguage =
+              decodeHtmlEntities(
+                String(
+                  item.subtitleLanguage ??
+                    "",
+                ),
+              ).trim();
+
             const signal =
               classifyQuality(
                 quality,
               );
 
-            const tmdbMatch =
-              await findTmdbMovie(
+            const emptyMovie =
+              createEmptyMovie({
+                title,
+
                 normalizedTitle,
+
+                quality,
+
+                signal,
+
                 year,
-              );
+
+                country,
+
+                publishedAt,
+
+                sourceUrl,
+              });
+
+            /*
+             * Not a CAM or WEB event.
+             */
+            if (
+              signal ===
+              "OTHER"
+            ) {
+              return emptyMovie;
+            }
+
+            /*
+             * Ignore obviously historical
+             * entries that cannot be relevant
+             * to the current Watch Leaks
+             * operational window.
+             */
+            if (
+              !isPotentiallyRelevantReviewYear(
+                year,
+
+                publishedAt,
+              )
+            ) {
+              return emptyMovie;
+            }
+
+            const lookup =
+              await findTmdbMovie({
+                sourceTitle:
+                  title,
+
+                normalizedTitle,
+
+                year,
+
+                description,
+
+                country,
+
+                genres,
+
+                audioLanguage,
+
+                signal,
+
+                quality,
+              });
+
+            /*
+             * If deterministic matching AND
+             * Gemini could not safely verify
+             * the identity, send it to Admin.
+             */
+            if (
+              lookup.reviewReason
+            ) {
+              await saveReviewSafely({
+                sourceUrl,
+
+                sourceTitle:
+                  title,
+
+                normalizedTitle,
+
+                year,
+
+                quality,
+
+                signal,
+
+                publishedAt,
+
+                sourceDescription:
+                  description,
+
+                sourceCountry:
+                  country,
+
+                sourceGenres:
+                  genres,
+
+                sourceAudioLanguage:
+                  audioLanguage,
+
+                sourceSubtitleLanguage:
+                  subtitleLanguage,
+
+                reason:
+                  lookup
+                    .reviewReason,
+
+                candidateTmdbId:
+                  lookup
+                    .candidateTmdbId,
+
+                candidateTitle:
+                  lookup
+                    .candidateTitle,
+
+                candidateYear:
+                  lookup
+                    .candidateYear,
+
+                confidence:
+                  lookup
+                    .confidence,
+
+                details:
+                  lookup.details,
+              });
+            }
+
+            const tmdbMatch =
+              lookup.match;
 
             const relevantRelease =
               getRelevantRelease(
                 signal,
+
                 tmdbMatch,
               );
 
@@ -715,6 +3379,7 @@ export async function getCinemaCityMovies(): Promise<
               CinemaCityMovie =
               {
                 title,
+
                 normalizedTitle,
 
                 tmdbId:
@@ -768,74 +3433,123 @@ export async function getCinemaCityMovies(): Promise<
                   null,
 
                 quality,
+
                 signal,
 
                 year,
+
                 country,
+
                 publishedAt,
 
                 sourceUrl,
               };
 
+            /*
+             * Still unresolved:
+             *
+             * do not create a detection.
+             */
             if (
-              signal !==
-              "OTHER"
+              !tmdbMatch
             ) {
-              await saveCloudDetection(
-                {
-                  tmdbId:
-                    movie.tmdbId,
-
-                  title:
-                    movie.normalizedTitle,
-
-                  year:
-                    movie.year,
-
-                  detectionType:
-                    movie.signal,
-
-                  quality:
-                    movie.quality,
-
-                  detectedAt:
-                    movie.publishedAt,
-
-                  theatricalReleaseDate:
-                    movie
-                      .theatricalReleaseDate,
-
-                  theatricalReleaseRegion:
-                    movie
-                      .theatricalReleaseRegion,
-
-                  digitalReleaseDate:
-                    movie
-                      .digitalReleaseDate,
-
-                  digitalReleaseRegion:
-                    movie
-                      .digitalReleaseRegion,
-
-                  physicalReleaseDate:
-                    movie
-                      .physicalReleaseDate,
-
-                  physicalReleaseRegion:
-                    movie
-                      .physicalReleaseRegion,
-
-                  posterPath:
-                    movie.posterPath,
-
-                  source:
-                    "CinemaCity",
-
-                  sourceUrl:
-                    movie.sourceUrl,
-                },
-              );
+              return movie;
             }
+
+            /*
+             * IMPORTANT:
+             *
+             * Detection truth and official
+             * release metadata are separate.
+             *
+             * A verified CAM/WEB observation
+             * remains a detection even if
+             * TMDB does not currently expose
+             * the official release milestone
+             * required for latency.
+             */
+            await saveCloudDetection({
+              tmdbId:
+                movie.tmdbId,
+
+              title:
+                movie
+                  .normalizedTitle,
+
+              year:
+                movie.year,
+
+              detectionType:
+                movie.signal,
+
+              quality:
+                movie.quality,
+
+              detectedAt:
+                movie
+                  .publishedAt,
+
+              theatricalReleaseDate:
+                movie
+                  .theatricalReleaseDate,
+
+              theatricalReleaseRegion:
+                movie
+                  .theatricalReleaseRegion,
+
+              digitalReleaseDate:
+                movie
+                  .digitalReleaseDate,
+
+              digitalReleaseRegion:
+                movie
+                  .digitalReleaseRegion,
+
+              physicalReleaseDate:
+                movie
+                  .physicalReleaseDate,
+
+              physicalReleaseRegion:
+                movie
+                  .physicalReleaseRegion,
+
+              posterPath:
+                movie.posterPath,
+
+              source:
+                FEED_SOURCE,
+
+              sourceUrl:
+                movie.sourceUrl,
+            });
+
+            /*
+             * Whether deterministic matching
+             * or Gemini verified the identity,
+             * a successfully stored detection
+             * supersedes related pending
+             * reviews.
+             */
+            await approveRelatedMatchReviews({
+              source:
+                FEED_SOURCE,
+
+              sourceUrl:
+                movie.sourceUrl,
+
+              normalizedTitle:
+                movie
+                  .normalizedTitle,
+
+              year:
+                movie.year ===
+                "Unknown"
+                  ? null
+                  : movie.year,
+
+              detectionType:
+                signal,
+            });
 
             return movie;
           },
@@ -843,7 +3557,9 @@ export async function getCinemaCityMovies(): Promise<
       );
 
     return movies.filter(
-      (movie) => {
+      (
+        movie,
+      ) => {
         if (
           movie.signal ===
           "OTHER"
@@ -852,7 +3568,8 @@ export async function getCinemaCityMovies(): Promise<
         }
 
         return isRecentRelease(
-          movie.tmdbReleaseDate,
+          movie
+            .tmdbReleaseDate,
         );
       },
     );
@@ -863,18 +3580,20 @@ export async function getCinemaCityMovies(): Promise<
     );
 
     /*
-     * Only mark the RSS itself as
-     * failed when we never successfully
-     * fetched and parsed the feed.
+     * Only mark CinemaCity RSS itself as
+     * failed if fetching/parsing the RSS
+     * never succeeded.
      *
-     * A later TMDB/database problem
-     * should not make the RSS health
-     * indicator falsely say the feed
-     * itself is down.
+     * TMDB, Gemini or database problems must
+     * not incorrectly make the feed health
+     * indicator say CinemaCity is down.
      */
-    if (!feedLoaded) {
+    if (
+      !feedLoaded
+    ) {
       const message =
-        error instanceof Error
+        error instanceof
+        Error
           ? error.message
           : "Unknown CinemaCity RSS error.";
 

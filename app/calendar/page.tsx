@@ -1,5 +1,4 @@
 import Link from "next/link";
-
 import SiteHeader from "../../components/SiteHeader";
 
 type Region = "US" | "CA";
@@ -80,14 +79,10 @@ type CalendarMovieItem = {
   key: string;
   id: number;
   title: string;
-
   mediaType: "MOVIE";
-
   releaseDate: string;
   releaseLabel: string;
-
   posterPath: string;
-
   regions: Region[];
 };
 
@@ -95,16 +90,11 @@ type CalendarTvItem = {
   key: string;
   id: number;
   title: string;
-
   mediaType: "TV";
-
   releaseDate: string;
   releaseLabel: string;
-
   posterPath: string;
-
   originCountries: string[];
-
   seasonNumber: number;
   episodeNumber: number;
   episodeCode: string;
@@ -1480,32 +1470,24 @@ function CalendarCards({
             </>
           );
 
-          if (
+          const href =
             item.mediaType ===
             "MOVIE"
-          ) {
-            return (
-              <Link
-                key={
-                  item.key
-                }
-                href={`/movies/${item.id}`}
-                className="flex overflow-hidden border border-zinc-700 bg-zinc-950 transition hover:border-zinc-500"
-              >
-                {content}
-              </Link>
-            );
-          }
+              ? `/movies/${item.id}?from=calendar`
+              : `/tv-shows/${item.id}?from=calendar`;
 
           return (
-            <article
+            <Link
               key={
                 item.key
               }
-              className="flex overflow-hidden border border-zinc-700 bg-zinc-950"
+              href={
+                href
+              }
+              className="flex overflow-hidden border border-zinc-700 bg-zinc-950 transition hover:border-zinc-500"
             >
               {content}
-            </article>
+            </Link>
           );
         },
       )}
@@ -1582,31 +1564,24 @@ function CalendarList({
               </div>
             );
 
-            if (
+            const href =
               item.mediaType ===
               "MOVIE"
-            ) {
-              return (
-                <Link
-                  key={
-                    item.key
-                  }
-                  href={`/movies/${item.id}`}
-                  className="block"
-                >
-                  {row}
-                </Link>
-              );
-            }
+                ? `/movies/${item.id}?from=calendar`
+                : `/tv-shows/${item.id}?from=calendar`;
 
             return (
-              <div
+              <Link
                 key={
                   item.key
                 }
+                href={
+                  href
+                }
+                className="block"
               >
                 {row}
-              </div>
+              </Link>
             );
           },
         )}

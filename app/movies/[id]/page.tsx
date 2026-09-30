@@ -94,22 +94,24 @@ async function getMovie(
     );
   }
 
-  const response = await fetch(
-    `https://api.themoviedb.org/3/movie/${id}?language=en-US`,
-    {
-      headers: {
-        Authorization:
-          `Bearer ${token}`,
+  const response =
+    await fetch(
+      `https://api.themoviedb.org/3/movie/${id}?language=en-US`,
+      {
+        headers: {
+          Authorization:
+            `Bearer ${token}`,
 
-        accept:
-          "application/json",
-      },
+          accept:
+            "application/json",
+        },
 
-      next: {
-        revalidate: 3600,
+        next: {
+          revalidate:
+            3600,
+        },
       },
-    },
-  );
+    );
 
   if (
     response.status === 404
@@ -143,22 +145,24 @@ async function getReleaseDates(
     );
   }
 
-  const response = await fetch(
-    `https://api.themoviedb.org/3/movie/${id}/release_dates`,
-    {
-      headers: {
-        Authorization:
-          `Bearer ${token}`,
+  const response =
+    await fetch(
+      `https://api.themoviedb.org/3/movie/${id}/release_dates`,
+      {
+        headers: {
+          Authorization:
+            `Bearer ${token}`,
 
-        accept:
-          "application/json",
-      },
+          accept:
+            "application/json",
+        },
 
-      next: {
-        revalidate: 3600,
+        next: {
+          revalidate:
+            3600,
+        },
       },
-    },
-  );
+    );
 
   if (!response.ok) {
     throw new Error(
@@ -228,6 +232,31 @@ function formatDetectedDate(
       minute: "2-digit",
       timeZone: "UTC",
       timeZoneName: "short",
+    },
+  ).format(parsed);
+}
+
+function formatCompactDetectionDate(
+  date: string,
+) {
+  const parsed =
+    new Date(date);
+
+  if (
+    Number.isNaN(
+      parsed.getTime(),
+    )
+  ) {
+    return date;
+  }
+
+  return new Intl.DateTimeFormat(
+    "en-US",
+    {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      timeZone: "UTC",
     },
   ).format(parsed);
 }
@@ -359,9 +388,12 @@ function getLatencyInfo(
 
   if (difference === 0) {
     return {
-      short: "Same day",
+      short:
+        "Same day",
+
       long:
         "Detected on official release day",
+
       className:
         "text-amber-300",
     };
@@ -369,7 +401,9 @@ function getLatencyInfo(
 
   if (difference < 0) {
     const days =
-      Math.abs(difference);
+      Math.abs(
+        difference,
+      );
 
     return {
       short:
@@ -416,7 +450,8 @@ function getRegionReleases(
     );
 
   return (
-    regionData?.release_dates ??
+    regionData
+      ?.release_dates ??
     []
   );
 }
@@ -446,13 +481,15 @@ function buildMilestones(
   releaseDates:
     ReleaseDateRegion[],
 ) {
-  const regions: Region[] = [
-    "US",
-    "CA",
-  ];
+  const regions:
+    Region[] = [
+      "US",
+      "CA",
+    ];
 
   const milestones:
-    ReleaseMilestone[] = [];
+    ReleaseMilestone[] =
+      [];
 
   regions.forEach(
     (region) => {
@@ -464,10 +501,10 @@ function buildMilestones(
 
       const stages:
         ReleaseStage[] = [
-        "Theatrical",
-        "Digital",
-        "Physical",
-      ];
+          "Theatrical",
+          "Digital",
+          "Physical",
+        ];
 
       stages.forEach(
         (stage) => {
@@ -477,7 +514,8 @@ function buildMilestones(
                 (release) =>
                   getStageFromType(
                     release.type,
-                  ) === stage,
+                  ) ===
+                  stage,
               )
               .sort(
                 (a, b) =>
@@ -590,12 +628,16 @@ function buildWindowMetrics(
 
     {
       code: "CA",
-      name: "Canada",
+      name:
+        "Canada",
     },
   ];
 
   regions.forEach(
-    ({ code, name }) => {
+    ({
+      code,
+      name,
+    }) => {
       const theatrical =
         getMilestone(
           milestones,
@@ -720,29 +762,134 @@ function getBackDestination(
     return {
       href:
         "/shadow-zone",
+
       label:
         "Back to Shadow Zone",
     };
   }
 
   if (
-    from === "calendar" ||
+    from ===
+      "calendar" ||
     referer.includes(
       "/calendar",
     )
   ) {
     return {
-      href: "/calendar",
+      href:
+        "/calendar",
+
       label:
         "Back to Release Calendar",
     };
   }
 
   return {
-    href: "/movies",
+    href:
+      "/movies",
+
     label:
       "Back to Movies",
   };
+}
+
+function sortDetections(
+  detections:
+    PublicDetection[],
+) {
+  return [
+    ...detections,
+  ].sort(
+    (a, b) => {
+      const aTime =
+        new Date(
+          a.detectedAt,
+        ).getTime();
+
+      const bTime =
+        new Date(
+          b.detectedAt,
+        ).getTime();
+
+      if (
+        Number.isNaN(
+          aTime,
+        ) ||
+        Number.isNaN(
+          bTime,
+        )
+      ) {
+        return (
+          a.id - b.id
+        );
+      }
+
+      return (
+        aTime - bTime
+      );
+    },
+  );
+}
+
+function buildProgressionText(
+  detections:
+    PublicDetection[],
+) {
+  const sorted =
+    sortDetections(
+      detections,
+    );
+
+  const firstCam =
+    sorted.find(
+      (detection) =>
+        detection.detectionType ===
+        "CAM",
+    );
+
+  const firstWeb =
+    sorted.find(
+      (detection) =>
+        detection.detectionType ===
+        "WEB",
+    );
+
+  const events = [
+    firstCam,
+    firstWeb,
+  ]
+    .filter(
+      (
+        detection,
+      ): detection is PublicDetection =>
+        Boolean(
+          detection,
+        ),
+    )
+    .sort(
+      (a, b) =>
+        new Date(
+          a.detectedAt,
+        ).getTime() -
+        new Date(
+          b.detectedAt,
+        ).getTime(),
+    );
+
+  if (
+    events.length === 0
+  ) {
+    return "No detection progression recorded";
+  }
+
+  return events
+    .map(
+      (detection) =>
+        `${detection.detectionType} ${formatCompactDetectionDate(
+          detection.detectedAt,
+        )}`,
+    )
+    .join(" → ");
 }
 
 export default async function MoviePage({
@@ -768,13 +915,15 @@ export default async function MoviePage({
   const [
     movie,
     releaseDates,
-    detections,
+    rawDetections,
   ] = await Promise.all([
     getMovie(id),
 
     getReleaseDates(id),
 
-    Number.isFinite(tmdbId)
+    Number.isFinite(
+      tmdbId,
+    )
       ? getCloudPublicDetectionsByTmdbId(
           tmdbId,
         )
@@ -786,6 +935,11 @@ export default async function MoviePage({
   if (!movie) {
     notFound();
   }
+
+  const detections =
+    sortDetections(
+      rawDetections,
+    );
 
   const milestones =
     buildMilestones(
@@ -840,7 +994,9 @@ export default async function MoviePage({
         }`}
       >
         <Link
-          href={back.href}
+          href={
+            back.href
+          }
           className="text-sm font-medium text-zinc-300 transition hover:text-white"
         >
           ← {back.label}
@@ -869,61 +1025,54 @@ export default async function MoviePage({
             </p>
 
             <h1 className="mt-2 text-4xl font-bold tracking-tight sm:text-5xl">
-              {movie.title}
+              {
+                movie.title
+              }
             </h1>
 
-            <div className="mt-5 grid max-w-3xl grid-cols-2 border-y border-zinc-800 sm:grid-cols-4">
-              <div className="py-3 pr-4">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
-                  Year
-                </p>
+            <OnlineAvailabilitySummary
+              detections={
+                detections
+              }
+            />
 
-                <p className="mt-1 text-sm font-semibold text-white">
-                  {getYear(
-                    movie.release_date,
-                  )}
-                </p>
-              </div>
+            <div className="mt-5 grid max-w-4xl grid-cols-2 border-y border-zinc-800 sm:grid-cols-4">
+              <MetadataItem
+                label="Year"
+                value={getYear(
+                  movie.release_date,
+                )}
+              />
 
-              <div className="py-3 pr-4">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
-                  Runtime
-                </p>
+              <MetadataItem
+                label="Runtime"
+                value={formatRuntime(
+                  movie.runtime,
+                )}
+              />
 
-                <p className="mt-1 text-sm font-semibold text-white">
-                  {formatRuntime(
-                    movie.runtime,
-                  )}
-                </p>
-              </div>
-
-              <div className="py-3 pr-4">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
-                  TMDB Rating
-                </p>
-
-                <p className="mt-1 text-sm font-bold text-white">
-                  {movie.vote_average >
+              <MetadataItem
+                label="TMDB Rating"
+                value={
+                  movie.vote_average >
                   0
                     ? `${movie.vote_average.toFixed(
                         1,
                       )} / 10`
-                    : "Unrated"}
-                </p>
-              </div>
+                    : "Unrated"
+                }
+              />
 
-              <div className="py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
-                  Rating Votes
-                </p>
-
-                <p className="mt-1 text-sm font-semibold text-white">
-                  {movie.vote_count >
+              <MetadataItem
+                label="Rating Votes"
+                value={
+                  movie.vote_count >
                   0
                     ? movie.vote_count.toLocaleString()
-                    : "—"}
-                </p>
-              </div>
+                    : "—"
+                }
+                last
+              />
             </div>
 
             {movie.genres.length >
@@ -945,12 +1094,6 @@ export default async function MoviePage({
                 )}
               </div>
             )}
-
-            <OnlineAvailabilitySummary
-              detections={
-                detections
-              }
-            />
 
             <div className="mt-7 max-w-4xl">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
@@ -976,25 +1119,32 @@ export default async function MoviePage({
             </h2>
 
             <p className="mt-1 text-sm text-zinc-400">
-              Earliest reported
-              theatrical, digital and
-              physical releases for the
-              United States and Canada.
+              Earliest reported theatrical,
+              digital and physical releases
+              for the United States and Canada.
             </p>
           </div>
 
           {milestones.length >
           0 ? (
-            <ReleaseList
-              milestones={
-                milestones
-              }
-            />
+            <>
+              <ReleaseTimeline
+                milestones={
+                  milestones
+                }
+              />
+
+              <ReleaseList
+                milestones={
+                  milestones
+                }
+              />
+            </>
           ) : (
             <p className="mt-5 text-sm text-zinc-400">
-              No US or Canadian
-              release milestones are
-              currently available.
+              No US or Canadian release
+              milestones are currently
+              available.
             </p>
           )}
         </section>
@@ -1019,7 +1169,7 @@ export default async function MoviePage({
                     key={
                       metric.label
                     }
-                    className="grid min-h-12 gap-2 py-2 sm:grid-cols-[1fr_140px_280px] sm:items-center"
+                    className="grid gap-1 py-3 sm:grid-cols-[1fr_140px_280px] sm:items-center"
                   >
                     <p className="text-sm font-medium text-zinc-300">
                       {
@@ -1044,11 +1194,10 @@ export default async function MoviePage({
             </div>
           ) : (
             <p className="mt-5 text-sm text-zinc-400">
-              Not enough official
-              release milestones are
-              currently available to
-              calculate release-window
-              metrics.
+              Not enough official release
+              milestones are currently
+              available to calculate
+              release-window metrics.
             </p>
           )}
         </section>
@@ -1069,6 +1218,34 @@ export default async function MoviePage({
         </p>
       </section>
     </main>
+  );
+}
+
+function MetadataItem({
+  label,
+  value,
+  last = false,
+}: {
+  label: string;
+  value: string;
+  last?: boolean;
+}) {
+  return (
+    <div
+      className={`py-3 ${
+        last
+          ? ""
+          : "pr-4"
+      }`}
+    >
+      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        {label}
+      </p>
+
+      <p className="mt-1 text-sm font-bold text-white">
+        {value}
+      </p>
+    </div>
   );
 }
 
@@ -1096,9 +1273,21 @@ function OnlineAvailabilitySummary({
     camDetections[0] ??
     null;
 
+  const latestCam =
+    camDetections[
+      camDetections.length -
+        1
+    ] ?? null;
+
   const firstWeb =
     webDetections[0] ??
     null;
+
+  const latestWeb =
+    webDetections[
+      webDetections.length -
+        1
+    ] ?? null;
 
   let status =
     "No Detection";
@@ -1106,149 +1295,232 @@ function OnlineAvailabilitySummary({
   let statusClass =
     "text-zinc-400";
 
-  if (
-    firstCam &&
-    firstWeb
-  ) {
-    status = "CAM → WEB";
-    statusClass =
-      "text-amber-300";
-  } else if (firstWeb) {
+  let statusDetail =
+    "No CAM or WEB availability has been detected for this title.";
+
+  if (firstWeb) {
     status =
       "WEB Available";
+
     statusClass =
       "text-amber-300";
+
+    statusDetail =
+      firstCam
+        ? "CAM and WEB availability have both been recorded."
+        : "WEB availability has been recorded.";
   } else if (firstCam) {
     status =
       "CAM Available";
+
     statusClass =
       "text-red-400";
+
+    statusDetail =
+      "CAM availability has been recorded. No WEB detection is currently recorded.";
   }
 
   return (
-    <section className="mt-6 max-w-4xl border-y border-zinc-700 py-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <section className="mt-5 max-w-4xl border border-zinc-700 bg-zinc-950/70">
+      <div className="flex flex-wrap items-end justify-between gap-4 border-b border-zinc-800 px-4 py-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-red-500">
             Online Availability
           </p>
 
           <p
-            className={`mt-1 text-xl font-bold ${statusClass}`}
+            className={`mt-1 text-2xl font-bold ${statusClass}`}
           >
             {status}
           </p>
+
+          <p className="mt-1 text-sm text-zinc-400">
+            {statusDetail}
+          </p>
         </div>
 
-        {detections.length >
-          0 && (
-          <p className="text-xs font-medium text-zinc-400">
-            {
-              detections.length
-            }{" "}
-            {detections.length ===
-            1
-              ? "detection"
-              : "detections"}{" "}
-            recorded
+        <div className="text-right">
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            Detection Progression
           </p>
-        )}
+
+          <p className="mt-1 text-sm font-bold text-zinc-100">
+            {buildProgressionText(
+              detections,
+            )}
+          </p>
+
+          {detections.length >
+            0 && (
+            <p className="mt-1 text-xs text-zinc-500">
+              {
+                detections.length
+              }{" "}
+              {detections.length ===
+              1
+                ? "record"
+                : "records"}
+            </p>
+          )}
+        </div>
       </div>
 
-      {detections.length ===
-      0 ? (
-        <p className="mt-3 text-sm text-zinc-400">
-          No CAM or WEB availability
-          has been detected by
-          ShadowWindow for this title.
-        </p>
-      ) : (
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
-          {firstCam && (
-            <AvailabilityBlock
-              label="CAM"
-              detection={
-                firstCam
-              }
-            />
-          )}
+      <div className="grid md:grid-cols-2">
+        <AvailabilityLane
+          type="CAM"
+          firstDetection={
+            firstCam
+          }
+          latestDetection={
+            latestCam
+          }
+          count={
+            camDetections.length
+          }
+        />
 
-          {firstWeb && (
-            <AvailabilityBlock
-              label="WEB"
-              detection={
-                firstWeb
-              }
-            />
-          )}
-        </div>
-      )}
+        <AvailabilityLane
+          type="WEB"
+          firstDetection={
+            firstWeb
+          }
+          latestDetection={
+            latestWeb
+          }
+          count={
+            webDetections.length
+          }
+        />
+      </div>
 
-      <p className="mt-4 text-xs leading-5 text-zinc-500">
-        Online availability may be
-        observed across unauthorized
-        streaming services, torrent
-        indexes, cyberlockers and
-        file-hosting services. Specific
-        monitored sources and
-        unauthorized links are not
-        published.
+      <p className="border-t border-zinc-800 px-4 py-2.5 text-xs leading-5 text-zinc-500">
+        Availability may be observed
+        across unauthorized streaming,
+        torrent-index and file-hosting
+        services. Specific monitored
+        sources and unauthorized links
+        are not published.
       </p>
     </section>
   );
 }
 
-function AvailabilityBlock({
-  label,
-  detection,
+function AvailabilityLane({
+  type,
+  firstDetection,
+  latestDetection,
+  count,
 }: {
-  label: DetectionType;
-  detection:
-    PublicDetection;
+  type: DetectionType;
+
+  firstDetection:
+    PublicDetection | null;
+
+  latestDetection:
+    PublicDetection | null;
+
+  count: number;
 }) {
+  const typeClass =
+    type === "CAM"
+      ? "border-red-500/40 bg-red-500/10 text-red-400"
+      : "border-amber-400/40 bg-amber-400/10 text-amber-300";
+
+  if (
+    !firstDetection ||
+    !latestDetection
+  ) {
+    return (
+      <div className="border-b border-zinc-800 px-4 py-4 md:border-b-0 md:border-r last:md:border-r-0">
+        <span
+          className={`inline-block border px-2 py-0.5 text-xs font-bold ${typeClass}`}
+        >
+          {type}
+        </span>
+
+        <p className="mt-3 text-sm font-semibold text-zinc-400">
+          No {type} detection recorded.
+        </p>
+      </div>
+    );
+  }
+
   const latency =
     getLatencyInfo(
-      detection.relevantReleaseDate,
-      detection.detectedAt,
+      firstDetection
+        .relevantReleaseDate,
+      firstDetection
+        .detectedAt,
     );
 
   return (
-    <div className="border border-zinc-800 bg-zinc-950 p-3">
+    <div className="border-b border-zinc-800 px-4 py-3 md:border-b-0 md:border-r last:md:border-r-0">
       <div className="flex items-center justify-between gap-3">
-        <span className="rounded-full border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-xs font-bold text-red-400">
-          {label}
+        <span
+          className={`border px-2 py-0.5 text-xs font-bold ${typeClass}`}
+        >
+          {type}
         </span>
 
-        <span className="text-sm font-semibold text-zinc-200">
-          {detection.quality ||
-            "Quality unavailable"}
-        </span>
+        <div className="text-right">
+          <p className="text-sm font-bold text-white">
+            {latestDetection
+              .quality ||
+              "Quality unavailable"}
+          </p>
+
+          <p className="text-xs text-zinc-500">
+            {count}{" "}
+            {count === 1
+              ? "record"
+              : "records"}
+          </p>
+        </div>
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-x-5 gap-y-3">
         <InfoItem
           label="First Detected"
           value={formatDetectedDate(
-            detection.detectedAt,
+            firstDetection
+              .detectedAt,
+          )}
+        />
+
+        <InfoItem
+          label="Latest Observed"
+          value={formatDetectedDate(
+            latestDetection
+              .detectedAt,
           )}
         />
 
         <InfoItem
           label="Official Release"
           value={formatOptionalDate(
-            detection.relevantReleaseDate,
+            firstDetection
+              .relevantReleaseDate,
           )}
         />
 
         <InfoItem
           label="Region"
           value={formatDetectionRegion(
-            detection.relevantReleaseRegion,
+            firstDetection
+              .relevantReleaseRegion,
+          )}
+        />
+
+        <InfoItem
+          label="Release Stage"
+          value={getDetectionReleaseStage(
+            firstDetection
+              .detectionType,
           )}
         />
 
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
             Latency
           </p>
 
@@ -1258,7 +1530,9 @@ function AvailabilityBlock({
               latency.long
             }
           >
-            {latency.short}
+            {
+              latency.short
+            }
           </p>
         </div>
       </div>
@@ -1275,7 +1549,7 @@ function InfoItem({
 }) {
   return (
     <div>
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
         {label}
       </p>
 
@@ -1292,167 +1566,182 @@ function DetectionHistory({
   detections:
     PublicDetection[];
 }) {
-  const hasCam =
-    detections.some(
-      (detection) =>
-        detection.detectionType ===
-        "CAM",
-    );
-
-  const hasWeb =
-    detections.some(
-      (detection) =>
-        detection.detectionType ===
-        "WEB",
-    );
-
-  let progression =
-    "No progression recorded";
-
-  if (
-    hasCam &&
-    hasWeb
-  ) {
-    progression =
-      "CAM → WEB";
-  } else if (hasCam) {
-    progression =
-      "CAM";
-  } else if (hasWeb) {
-    progression =
-      "WEB";
-  }
-
   return (
     <section className="mt-12">
-      <div className="border-b border-zinc-800 pb-3">
-        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-red-500">
-          Shadow Intelligence
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-4 border-b border-zinc-800 pb-3">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-red-500">
+            Shadow Intelligence
+          </p>
 
-        <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="text-2xl font-bold tracking-tight">
-              Detection History
-            </h2>
+          <h2 className="mt-2 text-2xl font-bold tracking-tight">
+            Detection History
+          </h2>
 
-            <p className="mt-1 text-sm text-zinc-400">
-              Recorded unauthorized
-              availability for this
-              title in chronological
-              order.
+          <p className="mt-1 text-sm text-zinc-400">
+            Recorded unauthorized
+            availability for this title
+            in chronological order.
+          </p>
+        </div>
+
+        {detections.length >
+          0 && (
+          <div className="text-right">
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Progression
+            </p>
+
+            <p className="mt-1 text-sm font-bold text-white">
+              {buildProgressionText(
+                detections,
+              )}
             </p>
           </div>
-
-          {detections.length >
-            0 && (
-            <div className="text-right">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
-                Detection Progression
-              </p>
-
-              <p className="mt-1 text-sm font-bold text-white">
-                {progression}
-              </p>
-            </div>
-          )}
-        </div>
+        )}
       </div>
 
       {detections.length ===
       0 ? (
         <div className="border-b border-zinc-900 py-4">
           <p className="text-sm font-medium text-zinc-300">
-            No ShadowWindow
-            detection data is
-            currently connected to
-            this title.
+            No ShadowWindow detection
+            data is currently connected
+            to this title.
           </p>
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <div className="min-w-[1000px]">
-            <div className="grid h-9 grid-cols-[230px_150px_150px_180px_170px_120px] items-center border-b border-zinc-700 text-[11px] font-bold uppercase tracking-[0.1em] text-zinc-400">
-              <div>
-                Detected
-              </div>
-
-              <div>
-                Online Availability
-              </div>
-
-              <div>
-                Quality
-              </div>
-
-              <div>
-                Official Release
-              </div>
-
-              <div>
-                Region
-              </div>
-
-              <div>
-                Latency
-              </div>
+        <div>
+          <div className="hidden grid-cols-[1.45fr_.75fr_.9fr_1.15fr_1fr_.75fr] gap-4 border-b border-zinc-700 py-2 text-xs font-bold uppercase tracking-[0.1em] text-zinc-400 md:grid">
+            <div>
+              Detected
             </div>
 
-            {detections.map(
-              (detection) => {
-                const latency =
-                  getLatencyInfo(
-                    detection.relevantReleaseDate,
-                    detection.detectedAt,
-                  );
+            <div>
+              Availability
+            </div>
 
-                return (
-                  <div
-                    key={
-                      detection.id
-                    }
-                    className="grid min-h-12 grid-cols-[230px_150px_150px_180px_170px_120px] items-center border-b border-zinc-900 text-sm"
-                  >
-                    <div className="pr-3 font-medium text-zinc-200">
+            <div>
+              Quality
+            </div>
+
+            <div>
+              Official Release
+            </div>
+
+            <div>
+              Region
+            </div>
+
+            <div>
+              Latency
+            </div>
+          </div>
+
+          {detections.map(
+            (detection) => {
+              const latency =
+                getLatencyInfo(
+                  detection
+                    .relevantReleaseDate,
+
+                  detection
+                    .detectedAt,
+                );
+
+              const badgeClass =
+                detection
+                  .detectionType ===
+                "CAM"
+                  ? "border-red-500/40 bg-red-500/10 text-red-400"
+                  : "border-amber-400/40 bg-amber-400/10 text-amber-300";
+
+              return (
+                <div
+                  key={
+                    detection.id
+                  }
+                  className="grid gap-2 border-b border-zinc-900 py-3 text-sm md:grid-cols-[1.45fr_.75fr_.9fr_1.15fr_1fr_.75fr] md:items-center md:gap-4"
+                >
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-zinc-500 md:hidden">
+                      Detected
+                    </p>
+
+                    <p className="font-medium text-zinc-200">
                       {formatDetectedDate(
-                        detection.detectedAt,
+                        detection
+                          .detectedAt,
                       )}
-                    </div>
+                    </p>
+                  </div>
 
-                    <div>
-                      <span className="rounded-full border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs font-bold text-red-400">
-                        {
-                          detection.detectionType
-                        }
-                      </span>
-                    </div>
+                  <div>
+                    <p className="mb-1 text-xs font-semibold uppercase text-zinc-500 md:hidden">
+                      Availability
+                    </p>
 
-                    <div className="font-medium text-zinc-300">
-                      {detection.quality ||
+                    <span
+                      className={`inline-block border px-2 py-0.5 text-xs font-bold ${badgeClass}`}
+                    >
+                      {
+                        detection
+                          .detectionType
+                      }
+                    </span>
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-zinc-500 md:hidden">
+                      Quality
+                    </p>
+
+                    <p className="font-medium text-zinc-300">
+                      {detection
+                        .quality ||
                         "Unavailable"}
-                    </div>
+                    </p>
+                  </div>
 
-                    <div>
-                      <p className="font-medium text-zinc-200">
-                        {formatOptionalDate(
-                          detection.relevantReleaseDate,
-                        )}
-                      </p>
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-zinc-500 md:hidden">
+                      Official Release
+                    </p>
 
-                      <p className="mt-0.5 text-xs text-zinc-500">
-                        {getDetectionReleaseStage(
-                          detection.detectionType,
-                        )}
-                      </p>
-                    </div>
-
-                    <div className="font-medium text-zinc-300">
-                      {formatDetectionRegion(
-                        detection.relevantReleaseRegion,
+                    <p className="font-medium text-zinc-200">
+                      {formatOptionalDate(
+                        detection
+                          .relevantReleaseDate,
                       )}
-                    </div>
+                    </p>
 
-                    <div
+                    <p className="mt-0.5 text-xs text-zinc-500">
+                      {getDetectionReleaseStage(
+                        detection
+                          .detectionType,
+                      )}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-zinc-500 md:hidden">
+                      Region
+                    </p>
+
+                    <p className="font-medium text-zinc-300">
+                      {formatDetectionRegion(
+                        detection
+                          .relevantReleaseRegion,
+                      )}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-zinc-500 md:hidden">
+                      Latency
+                    </p>
+
+                    <p
                       className={`font-bold ${latency.className}`}
                       title={
                         latency.long
@@ -1461,15 +1750,66 @@ function DetectionHistory({
                       {
                         latency.short
                       }
-                    </div>
+                    </p>
                   </div>
-                );
-              },
-            )}
-          </div>
+                </div>
+              );
+            },
+          )}
         </div>
       )}
     </section>
+  );
+}
+
+function ReleaseTimeline({
+  milestones,
+}: {
+  milestones:
+    ReleaseMilestone[];
+}) {
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-2">
+      {milestones.map(
+        (
+          milestone,
+          index,
+        ) => (
+          <div
+            key={`${milestone.region}-${milestone.stage}-${milestone.date}-${index}`}
+            className="flex items-center gap-2"
+          >
+            {index > 0 && (
+              <span className="text-zinc-700">
+                →
+              </span>
+            )}
+
+            <div className="border border-zinc-800 bg-zinc-950 px-3 py-2">
+              <p
+                className={`text-xs font-bold ${getStageClass(
+                  milestone.stage,
+                )}`}
+              >
+                {
+                  milestone.stage
+                }{" "}
+                ·{" "}
+                {
+                  milestone.region
+                }
+              </p>
+
+              <p className="mt-0.5 text-xs font-medium text-zinc-300">
+                {formatDate(
+                  milestone.date,
+                )}
+              </p>
+            </div>
+          </div>
+        ),
+      )}
+    </div>
   );
 }
 
@@ -1480,42 +1820,52 @@ function ReleaseList({
     ReleaseMilestone[];
 }) {
   return (
-    <div className="mt-3 overflow-x-auto">
-      <div className="min-w-[720px]">
-        <div className="grid h-9 grid-cols-[180px_160px_190px_1fr] items-center border-b border-zinc-700 text-[11px] font-bold uppercase tracking-[0.1em] text-zinc-400">
-          <div>
-            Region
-          </div>
-
-          <div>
-            Release
-          </div>
-
-          <div>
-            Date
-          </div>
-
-          <div>
-            Certification
-          </div>
+    <div className="mt-4">
+      <div className="hidden grid-cols-[1.2fr_1fr_1.2fr_1fr] gap-4 border-b border-zinc-700 py-2 text-xs font-bold uppercase tracking-[0.1em] text-zinc-400 md:grid">
+        <div>
+          Region
         </div>
 
-        {milestones.map(
-          (
-            milestone,
-            index,
-          ) => (
-            <div
-              key={`${milestone.region}-${milestone.stage}-${milestone.date}-${index}`}
-              className="grid h-11 grid-cols-[180px_160px_190px_1fr] items-center border-b border-zinc-900 text-sm"
-            >
-              <div className="font-medium text-zinc-300">
+        <div>
+          Release
+        </div>
+
+        <div>
+          Date
+        </div>
+
+        <div>
+          Certification
+        </div>
+      </div>
+
+      {milestones.map(
+        (
+          milestone,
+          index,
+        ) => (
+          <div
+            key={`${milestone.region}-${milestone.stage}-${milestone.date}-${index}`}
+            className="grid gap-2 border-b border-zinc-900 py-3 text-sm md:grid-cols-[1.2fr_1fr_1.2fr_1fr] md:items-center md:gap-4"
+          >
+            <div>
+              <p className="text-xs font-semibold uppercase text-zinc-500 md:hidden">
+                Region
+              </p>
+
+              <p className="font-medium text-zinc-300">
                 {getRegionName(
                   milestone.region,
                 )}
-              </div>
+              </p>
+            </div>
 
-              <div
+            <div>
+              <p className="text-xs font-semibold uppercase text-zinc-500 md:hidden">
+                Release
+              </p>
+
+              <p
                 className={`font-semibold ${getStageClass(
                   milestone.stage,
                 )}`}
@@ -1523,22 +1873,35 @@ function ReleaseList({
                 {
                   milestone.stage
                 }
-              </div>
+              </p>
+            </div>
 
-              <div className="font-medium text-zinc-200">
+            <div>
+              <p className="text-xs font-semibold uppercase text-zinc-500 md:hidden">
+                Date
+              </p>
+
+              <p className="font-medium text-zinc-200">
                 {formatDate(
                   milestone.date,
                 )}
-              </div>
-
-              <div className="text-zinc-400">
-                {milestone.certification ||
-                  "—"}
-              </div>
+              </p>
             </div>
-          ),
-        )}
-      </div>
+
+            <div>
+              <p className="text-xs font-semibold uppercase text-zinc-500 md:hidden">
+                Certification
+              </p>
+
+              <p className="text-zinc-400">
+                {milestone
+                  .certification ||
+                  "—"}
+              </p>
+            </div>
+          </div>
+        ),
+      )}
     </div>
   );
 }
