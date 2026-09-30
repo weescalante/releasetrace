@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
+
 import type {
   DetectionType,
   PublicDetection,
@@ -11,7 +13,6 @@ type DetectionSectionProps = {
   label: string;
   title: string;
   description: string;
-
   detectionType: DetectionType;
 
   initialDetections: PublicDetection[];
@@ -22,22 +23,27 @@ type DetectionSectionProps = {
 
 type DetectionApiResponse = {
   success: boolean;
-
   detections: PublicDetection[];
-
   total: number;
   limit: number;
   offset: number;
-
   hasMore: boolean;
   nextOffset: number | null;
 };
 
+type ViewMode = "cards" | "list";
+
+type LatencyInfo = {
+  short: string;
+  long: string;
+  className: string;
+};
+
 function formatReleaseDate(
   date: string | null,
-): string {
+) {
   if (!date) {
-    return "Release date unavailable";
+    return "Unavailable";
   }
 
   const parsedDate = new Date(
@@ -57,10 +63,15 @@ function formatReleaseDate(
 
 function formatDetectedDate(
   date: string,
-): string {
-  const parsedDate = new Date(date);
+) {
+  const parsedDate =
+    new Date(date);
 
-  if (Number.isNaN(parsedDate.getTime())) {
+  if (
+    Number.isNaN(
+      parsedDate.getTime(),
+    )
+  ) {
     return date;
   }
 
@@ -78,81 +89,167 @@ function formatDetectedDate(
   ).format(parsedDate);
 }
 
-function getReleaseLabel(
-  detectionType: DetectionType,
+function formatRegion(
   region: string | null,
-): string {
-  const label =
-    detectionType === "CAM"
-      ? "Theatrical release"
-      : "Digital release";
-
-  if (region) {
-    return `${label} · ${region}`;
+) {
+  if (!region) {
+    return null;
   }
 
-  return label;
+  if (region === "US") {
+    return "United States";
+  }
+
+  if (region === "CA") {
+    return "Canada";
+  }
+
+  return region;
 }
 
-function getTimingDescription(
+function getReleaseStage(
   detectionType: DetectionType,
+) {
+  return detectionType === "CAM"
+    ? "Theatrical"
+    : "Digital";
+}
+
+function getReleaseContext(
+  detection: PublicDetection,
+) {
+  const stage =
+    getReleaseStage(
+      detection.detectionType,
+    );
+
+  const region =
+    formatRegion(
+      detection.relevantReleaseRegion,
+    );
+
+  return region
+    ? `${stage} · ${region}`
+    : stage;
+}
+
+function getTitleHref(
+  detection: PublicDetection,
+) {
+  if (!detection.tmdbId) {
+    return null;
+  }
+
+  return `/movies/${detection.tmdbId}?from=shadow-zone`;
+}
+
+function getLatencyInfo(
   releaseDate: string | null,
   detectedDate: string,
-): string | null {
+): LatencyInfo {
   if (!releaseDate) {
-    return null;
+    return {
+      short: "Unavailable",
+      long:
+        "Release date unavailable",
+      className:
+        "text-zinc-500",
+    };
   }
 
-  const detected = new Date(detectedDate);
+  const detected =
+    new Date(detectedDate);
 
-  if (Number.isNaN(detected.getTime())) {
-    return null;
+  if (
+    Number.isNaN(
+      detected.getTime(),
+    )
+  ) {
+    return {
+      short: "Unavailable",
+      long:
+        "Unable to calculate latency",
+      className:
+        "text-zinc-500",
+    };
   }
 
-  const [year, month, day] =
-    releaseDate.split("-").map(Number);
-
-  const releaseDay = Date.UTC(
+  const [
     year,
-    month - 1,
+    month,
     day,
-  );
+  ] = releaseDate
+    .split("-")
+    .map(Number);
 
-  const detectedDay = Date.UTC(
-    detected.getUTCFullYear(),
-    detected.getUTCMonth(),
-    detected.getUTCDate(),
-  );
+  const releaseDay =
+    Date.UTC(
+      year,
+      month - 1,
+      day,
+    );
 
-  const difference = Math.round(
-    (detectedDay - releaseDay) /
-      (1000 * 60 * 60 * 24),
-  );
+  const detectedDay =
+    Date.UTC(
+      detected.getUTCFullYear(),
+      detected.getUTCMonth(),
+      detected.getUTCDate(),
+    );
 
-  const releaseName =
-    detectionType === "CAM"
-      ? "theatrical release"
-      : "digital release";
+  const difference =
+    Math.round(
+      (detectedDay -
+        releaseDay) /
+        (1000 *
+          60 *
+          60 *
+          24),
+    );
 
   if (difference === 0) {
-    return `${detectionType} detected on ${releaseName} day`;
+    return {
+      short: "Same day",
+      long:
+        "Detected on release day",
+      className:
+        "text-amber-300",
+    };
   }
 
-  if (difference === 1) {
-    return `${detectionType} detected 1 day after ${releaseName}`;
+  if (difference < 0) {
+    const days =
+      Math.abs(difference);
+
+    return {
+      short:
+        days === 1
+          ? "1 day early"
+          : `${days} days early`,
+
+      long:
+        days === 1
+          ? "Detected 1 day before release"
+          : `Detected ${days} days before release`,
+
+      className:
+        "text-red-400",
+    };
   }
 
-  if (difference === -1) {
-    return `${detectionType} detected 1 day before ${releaseName}`;
-  }
+  return {
+    short:
+      difference === 1
+        ? "+1 day"
+        : `+${difference} days`,
 
-  if (difference > 1) {
-    return `${detectionType} detected ${difference} days after ${releaseName}`;
-  }
+    long:
+      difference === 1
+        ? "Detected 1 day after release"
+        : `Detected ${difference} days after release`,
 
-  return `${detectionType} detected ${Math.abs(
-    difference,
-  )} days before ${releaseName}`;
+    className:
+      "text-zinc-200",
+  };
 }
 
 export default function DetectionSection({
@@ -166,23 +263,52 @@ export default function DetectionSection({
   initialHasMore,
   initialNextOffset,
 }: DetectionSectionProps) {
-  const [detections, setDetections] =
-    useState(initialDetections);
+  const [
+    detections,
+    setDetections,
+  ] = useState(
+    initialDetections,
+  );
 
-  const [total, setTotal] =
-    useState(initialTotal);
+  const [
+    total,
+    setTotal,
+  ] = useState(
+    initialTotal,
+  );
 
-  const [hasMore, setHasMore] =
-    useState(initialHasMore);
+  const [
+    hasMore,
+    setHasMore,
+  ] = useState(
+    initialHasMore,
+  );
 
-  const [nextOffset, setNextOffset] =
-    useState(initialNextOffset);
+  const [
+    nextOffset,
+    setNextOffset,
+  ] = useState(
+    initialNextOffset,
+  );
 
-  const [loading, setLoading] =
-    useState(false);
+  const [
+    loading,
+    setLoading,
+  ] = useState(false);
 
-  const [error, setError] =
-    useState<string | null>(null);
+  const [
+    error,
+    setError,
+  ] = useState<
+    string | null
+  >(null);
+
+  const [
+    viewMode,
+    setViewMode,
+  ] = useState<ViewMode>(
+    "cards",
+  );
 
   async function loadMore() {
     if (
@@ -197,9 +323,10 @@ export default function DetectionSection({
     setError(null);
 
     try {
-      const response = await fetch(
-        `/api/detections?type=${detectionType}&limit=8&offset=${nextOffset}`,
-      );
+      const response =
+        await fetch(
+          `/api/detections?type=${detectionType}&limit=8&offset=${nextOffset}`,
+        );
 
       if (!response.ok) {
         throw new Error(
@@ -207,7 +334,8 @@ export default function DetectionSection({
         );
       }
 
-      const data: DetectionApiResponse =
+      const data:
+        DetectionApiResponse =
         await response.json();
 
       if (!data.success) {
@@ -216,16 +344,28 @@ export default function DetectionSection({
         );
       }
 
-      setDetections((current) => [
-        ...current,
-        ...data.detections,
-      ]);
+      setDetections(
+        (current) => [
+          ...current,
+          ...data.detections,
+        ],
+      );
 
-      setTotal(data.total);
-      setHasMore(data.hasMore);
-      setNextOffset(data.nextOffset);
+      setTotal(
+        data.total,
+      );
+
+      setHasMore(
+        data.hasMore,
+      );
+
+      setNextOffset(
+        data.nextOffset,
+      );
     } catch (loadError) {
-      console.error(loadError);
+      console.error(
+        loadError,
+      );
 
       setError(
         "Unable to load more detections.",
@@ -238,58 +378,112 @@ export default function DetectionSection({
   return (
     <section
       id={id}
-      className="scroll-mt-8 pt-14"
+      className="scroll-mt-8 pt-12"
     >
-      <div className="mb-6 flex flex-col gap-4 border-b border-zinc-900 pb-5 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.25em] text-red-500">
-            {label}
-          </p>
+      <div className="mb-3 border-b border-zinc-800 pb-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-red-500">
+              {label}
+            </p>
 
-          <h2 className="mt-2 text-2xl font-bold tracking-tight">
-            {title}
-          </h2>
+            <h2 className="mt-1.5 text-2xl font-bold tracking-tight">
+              {title}
+            </h2>
 
-          <p className="mt-2 max-w-2xl text-sm text-zinc-500">
-            {description}
-          </p>
-        </div>
-
-        <p className="shrink-0 text-xs text-zinc-600">
-          {total}{" "}
-          {total === 1
-            ? "detection"
-            : "detections"}
-          {" · "}
-          Most recent first
-        </p>
-      </div>
-
-      {detections.length === 0 ? (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-8">
-          <p className="text-sm text-zinc-400">
-            No recent detections are currently
-            available.
-          </p>
-        </div>
-      ) : (
-        <>
-          <div className="grid gap-4 lg:grid-cols-2">
-            {detections.map((detection) => (
-              <DetectionCard
-                key={detection.id}
-                detection={detection}
-              />
-            ))}
+            <p className="mt-1 text-sm text-zinc-400">
+              {description}
+            </p>
           </div>
 
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-xs text-zinc-500">
+              {total}{" "}
+              {total === 1
+                ? "detection"
+                : "detections"}
+              {" · "}
+              Most recent first
+            </p>
+
+            <div className="flex rounded-md border border-zinc-700 p-0.5">
+              <button
+                type="button"
+                onClick={() =>
+                  setViewMode(
+                    "cards",
+                  )
+                }
+                className={`rounded px-3 py-1 text-xs font-medium ${
+                  viewMode ===
+                  "cards"
+                    ? "bg-zinc-800 text-white"
+                    : "text-zinc-400 hover:text-white"
+                }`}
+              >
+                Cards
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setViewMode(
+                    "list",
+                  )
+                }
+                className={`rounded px-3 py-1 text-xs font-medium ${
+                  viewMode ===
+                  "list"
+                    ? "bg-zinc-800 text-white"
+                    : "text-zinc-400 hover:text-white"
+                }`}
+              >
+                List
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {detections.length ===
+      0 ? (
+        <p className="py-4 text-sm text-zinc-400">
+          No recent detections are
+          currently available.
+        </p>
+      ) : (
+        <>
+          {viewMode ===
+          "cards" ? (
+            <div className="grid gap-1.5 lg:grid-cols-2">
+              {detections.map(
+                (detection) => (
+                  <DetectionCard
+                    key={
+                      detection.id
+                    }
+                    detection={
+                      detection
+                    }
+                  />
+                ),
+              )}
+            </div>
+          ) : (
+            <DetectionList
+              detections={
+                detections
+              }
+            />
+          )}
+
           {hasMore && (
-            <div className="mt-8 flex justify-center">
+            <div className="mt-5 flex justify-center">
               <button
                 type="button"
                 onClick={loadMore}
                 disabled={loading}
-                className="rounded-lg border border-zinc-700 px-6 py-3 text-sm font-medium text-zinc-200 transition hover:border-zinc-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                className="border border-zinc-700 px-4 py-2 text-xs font-medium text-zinc-300 transition hover:border-zinc-500 hover:text-white disabled:opacity-50"
               >
                 {loading
                   ? "Loading..."
@@ -299,17 +493,10 @@ export default function DetectionSection({
           )}
 
           {error && (
-            <p className="mt-4 text-center text-sm text-red-400">
+            <p className="mt-3 text-center text-xs text-red-400">
               {error}
             </p>
           )}
-
-          {!hasMore &&
-            detections.length > 8 && (
-              <p className="mt-6 text-center text-xs text-zinc-600">
-                All {total} detections loaded.
-              </p>
-            )}
         </>
       )}
     </section>
@@ -321,15 +508,13 @@ function DetectionCard({
 }: {
   detection: PublicDetection;
 }) {
-  const releaseLabel =
-    getReleaseLabel(
-      detection.detectionType,
-      detection.relevantReleaseRegion,
+  const releaseContext =
+    getReleaseContext(
+      detection,
     );
 
-  const timingDescription =
-    getTimingDescription(
-      detection.detectionType,
+  const latency =
+    getLatencyInfo(
       detection.relevantReleaseDate,
       detection.detectedAt,
     );
@@ -339,80 +524,279 @@ function DetectionCard({
       ? `https://image.tmdb.org/t/p/w185${detection.posterPath}`
       : null;
 
-  return (
-    <article className="group flex min-h-[165px] overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 transition hover:border-zinc-700">
-      <div className="w-28 shrink-0 bg-zinc-900 sm:w-32">
+  const href =
+    getTitleHref(
+      detection,
+    );
+
+  const content = (
+    <>
+      <div className="w-14 shrink-0 self-stretch bg-zinc-900">
         {posterUrl ? (
           <img
             src={posterUrl}
             alt={`${detection.title} poster`}
             loading="lazy"
-            className="h-full w-full object-cover"
+            className="h-full min-h-[94px] w-full object-cover"
           />
         ) : (
-          <div className="flex h-full items-center justify-center px-3 text-center text-xs text-zinc-600">
+          <div className="flex h-full min-h-[94px] items-center justify-center px-1 text-center text-[10px] text-zinc-500">
             No poster
           </div>
         )}
       </div>
 
-      <div className="min-w-0 flex-1 p-4 sm:p-5">
+      <div className="min-w-0 flex-1 px-3 py-2">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-zinc-600">
-              {detection.year ?? "Unknown"}
-            </p>
-
-            <h3 className="mt-1 line-clamp-2 text-lg font-semibold tracking-tight">
+            <h3 className="truncate text-sm font-bold text-white">
               {detection.title}
             </h3>
+
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] font-medium text-zinc-300">
+              {detection.year && (
+                <span>
+                  {detection.year}
+                </span>
+              )}
+
+              {detection.quality && (
+                <>
+                  <span className="text-zinc-600">
+                    •
+                  </span>
+
+                  <span>
+                    {
+                      detection.quality
+                    }
+                  </span>
+                </>
+              )}
+            </div>
           </div>
 
-          <span className="shrink-0 rounded-full border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-[10px] font-bold tracking-wider text-red-400">
-            {detection.detectionType}
+          <span className="shrink-0 rounded-full border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[9px] font-bold tracking-wide text-red-400">
+            {
+              detection.detectionType
+            }
           </span>
         </div>
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <div>
-            <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-600">
-              {releaseLabel}
+        <div className="mt-2 grid grid-cols-[1fr_1.25fr_.75fr] gap-4">
+          <div className="min-w-0">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+              Release
             </p>
 
-            <p className="mt-1 text-sm font-medium text-zinc-200">
+            <p className="mt-0.5 text-xs font-semibold text-zinc-100">
               {formatReleaseDate(
                 detection.relevantReleaseDate,
               )}
             </p>
+
+            <p className="mt-0.5 truncate text-[10px] font-medium text-zinc-400">
+              {releaseContext}
+            </p>
           </div>
 
-          <div>
-            <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-600">
+          <div className="min-w-0">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
               Detected
             </p>
 
-            <p className="mt-1 text-sm font-medium text-zinc-200">
+            <p className="mt-0.5 text-xs font-semibold leading-4 text-zinc-100">
               {formatDetectedDate(
                 detection.detectedAt,
               )}
             </p>
           </div>
+
+          <div>
+            <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+              Latency
+            </p>
+
+            <p
+              className={`mt-0.5 text-xs font-bold ${latency.className}`}
+              title={
+                latency.long
+              }
+            >
+              {
+                latency.short
+              }
+            </p>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
+  if (!href) {
+    return (
+      <article className="flex overflow-hidden border border-zinc-800 bg-zinc-950/70">
+        {content}
+      </article>
+    );
+  }
+
+  return (
+    <Link
+      href={href}
+      className="group flex overflow-hidden border border-zinc-800 bg-zinc-950/70 transition hover:border-zinc-600 hover:bg-zinc-950"
+    >
+      {content}
+    </Link>
+  );
+}
+
+function DetectionList({
+  detections,
+}: {
+  detections: PublicDetection[];
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <div className="min-w-[1050px]">
+        <div className="grid h-8 grid-cols-[minmax(280px,1fr)_170px_200px_250px_130px] items-center border-b border-zinc-700 text-[10px] font-semibold uppercase tracking-[0.13em] text-zinc-400">
+          <div>
+            Title
+          </div>
+
+          <div>
+            Online Availability
+          </div>
+
+          <div>
+            Release
+          </div>
+
+          <div>
+            Detected
+          </div>
+
+          <div>
+            Latency
+          </div>
         </div>
 
-        {timingDescription && (
-          <p className="mt-4 border-t border-zinc-900 pt-3 text-xs text-zinc-400">
-            {timingDescription}
-          </p>
-        )}
+        {detections.map(
+          (detection) => {
+            const latency =
+              getLatencyInfo(
+                detection.relevantReleaseDate,
+                detection.detectedAt,
+              );
 
-        <p className="mt-2 text-xs text-zinc-600">
-          Quality{" "}
-          <span className="text-zinc-400">
-            {detection.quality ??
-              "Unknown"}
-          </span>
-        </p>
+            const releaseContext =
+              getReleaseContext(
+                detection,
+              );
+
+            const href =
+              getTitleHref(
+                detection,
+              );
+
+            const row = (
+              <>
+                <div className="min-w-0 pr-4">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate font-semibold text-white">
+                      {
+                        detection.title
+                      }
+                    </span>
+
+                    {detection.year && (
+                      <span className="shrink-0 text-[10px] text-zinc-500">
+                        {
+                          detection.year
+                        }
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="rounded-full border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[9px] font-bold tracking-wide text-red-400">
+                    {
+                      detection.detectionType
+                    }
+                  </span>
+
+                  {detection.quality && (
+                    <span className="text-[10px] font-medium text-zinc-300">
+                      {
+                        detection.quality
+                      }
+                    </span>
+                  )}
+                </div>
+
+                <div>
+                  <p className="text-[11px] font-medium text-zinc-100">
+                    {formatReleaseDate(
+                      detection.relevantReleaseDate,
+                    )}
+                  </p>
+
+                  <p className="mt-0.5 text-[10px] text-zinc-400">
+                    {
+                      releaseContext
+                    }
+                  </p>
+                </div>
+
+                <div className="text-[11px] font-medium text-zinc-200">
+                  {formatDetectedDate(
+                    detection.detectedAt,
+                  )}
+                </div>
+
+                <div>
+                  <p
+                    className={`text-[11px] font-bold ${latency.className}`}
+                    title={
+                      latency.long
+                    }
+                  >
+                    {
+                      latency.short
+                    }
+                  </p>
+                </div>
+              </>
+            );
+
+            if (!href) {
+              return (
+                <div
+                  key={
+                    detection.id
+                  }
+                  className="grid min-h-9 grid-cols-[minmax(280px,1fr)_170px_200px_250px_130px] items-center border-b border-zinc-900 text-xs"
+                >
+                  {row}
+                </div>
+              );
+            }
+
+            return (
+              <Link
+                key={
+                  detection.id
+                }
+                href={href}
+                className="grid min-h-9 grid-cols-[minmax(280px,1fr)_170px_200px_250px_130px] items-center border-b border-zinc-900 text-xs transition hover:bg-zinc-950"
+              >
+                {row}
+              </Link>
+            );
+          },
+        )}
       </div>
-    </article>
+    </div>
   );
 }

@@ -1,7 +1,13 @@
 import { XMLParser } from "fast-xml-parser";
+
 import { saveCloudDetection } from "../lib/cloudDatabase";
+import {
+  recordFeedFailure,
+  recordFeedSuccess,
+} from "../lib/feedStatus";
 
 export type Signal = "CAM" | "WEB" | "OTHER";
+
 export type ReleaseRegion = "US" | "CA";
 
 export type CinemaCityMovie = {
@@ -45,6 +51,7 @@ type TmdbSearchResponse = {
 type TmdbReleaseDatesResponse = {
   results: {
     iso_3166_1: string;
+
     release_dates: {
       release_date: string;
       type: number;
@@ -71,14 +78,36 @@ type TmdbMatch = {
   physicalReleaseRegion: ReleaseRegion | null;
 };
 
-export function normalizeTitle(title: string): string {
-  const primaryTitle = title.split("/")[0].trim();
+type RawFeedItem = {
+  title?: unknown;
+  quality?: unknown;
+  year?: unknown;
+  country?: unknown;
+  pubDate?: unknown;
+  link?: unknown;
+};
 
-  return primaryTitle.replace(/\s*\(\d{4}\)\s*$/, "").trim();
+const FEED_SOURCE = "CinemaCity";
+
+export function normalizeTitle(
+  title: string,
+): string {
+  const primaryTitle =
+    title.split("/")[0].trim();
+
+  return primaryTitle
+    .replace(
+      /\s*\(\d{4}\)\s*$/,
+      "",
+    )
+    .trim();
 }
 
-export function classifyQuality(quality: string): Signal {
-  const normalizedQuality = quality.toUpperCase();
+export function classifyQuality(
+  quality: string,
+): Signal {
+  const normalizedQuality =
+    quality.toUpperCase();
 
   if (
     normalizedQuality.includes("CAM") ||
@@ -107,44 +136,77 @@ export function isRecentRelease(
     return false;
   }
 
-  const release = new Date(releaseDate);
-  const today = new Date();
+  const release =
+    new Date(releaseDate);
+
+  const today =
+    new Date();
 
   const daysDifference =
-    (today.getTime() - release.getTime()) /
+    (today.getTime() -
+      release.getTime()) /
     (1000 * 60 * 60 * 24);
 
-  return daysDifference >= -30 && daysDifference <= 120;
+  return (
+    daysDifference >= -30 &&
+    daysDifference <= 120
+  );
 }
 
 function firstReleaseForType(
   releaseData: TmdbReleaseDatesResponse,
   type: number,
 ): ReleaseMatch | null {
-  const preferredRegions: ReleaseRegion[] = ["US", "CA"];
+  const preferredRegions:
+    ReleaseRegion[] = [
+    "US",
+    "CA",
+  ];
 
-  for (const regionCode of preferredRegions) {
-    const region = releaseData.results.find(
-      (result) => result.iso_3166_1 === regionCode,
-    );
+  for (
+    const regionCode of
+    preferredRegions
+  ) {
+    const region =
+      releaseData.results.find(
+        (result) =>
+          result.iso_3166_1 ===
+          regionCode,
+      );
 
     if (!region) {
       continue;
     }
 
-    const matchingDates = region.release_dates
-      .filter((release) => release.type === type)
-      .map((release) => release.release_date)
-      .filter(Boolean)
-      .sort(
-        (a, b) =>
-          new Date(a).getTime() - new Date(b).getTime(),
-      );
+    const matchingDates =
+      region.release_dates
+        .filter(
+          (release) =>
+            release.type === type,
+        )
+        .map(
+          (release) =>
+            release.release_date,
+        )
+        .filter(Boolean)
+        .sort(
+          (a, b) =>
+            new Date(a).getTime() -
+            new Date(b).getTime(),
+        );
 
-    if (matchingDates.length > 0) {
+    if (
+      matchingDates.length > 0
+    ) {
       return {
-        date: matchingDates[0].slice(0, 10),
-        region: regionCode,
+        date:
+          matchingDates[0].slice(
+            0,
+            10,
+          ),
+
+        region:
+          regionCode,
       };
     }
   }
@@ -156,64 +218,101 @@ async function findTmdbMovie(
   title: string,
   year: string,
 ): Promise<TmdbMatch | null> {
-  const token = process.env.TMDB_READ_ACCESS_TOKEN;
+  const token =
+    process.env
+      .TMDB_READ_ACCESS_TOKEN;
 
   if (!token) {
     return null;
   }
 
   try {
-    const params = new URLSearchParams({
-      query: title,
-      include_adult: "false",
-      language: "en-US",
-    });
+    const params =
+      new URLSearchParams({
+        query: title,
+        include_adult:
+          "false",
+        language:
+          "en-US",
+      });
 
-    if (/^\d{4}$/.test(year)) {
-      params.set("primary_release_year", year);
+    if (
+      /^\d{4}$/.test(year)
+    ) {
+      params.set(
+        "primary_release_year",
+        year,
+      );
     }
 
-    const searchResponse = await fetch(
-      `https://api.themoviedb.org/3/search/movie?${params.toString()}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          accept: "application/json",
-        },
-        cache: "no-store",
-      },
-    );
+    const searchResponse =
+      await fetch(
+        `https://api.themoviedb.org/3/search/movie?${params.toString()}`,
+        {
+          headers: {
+            Authorization:
+              `Bearer ${token}`,
 
-    if (!searchResponse.ok) {
+            accept:
+              "application/json",
+          },
+
+          cache:
+            "no-store",
+        },
+      );
+
+    if (
+      !searchResponse.ok
+    ) {
       return null;
     }
 
-    const searchData: TmdbSearchResponse =
+    const searchData:
+      TmdbSearchResponse =
       await searchResponse.json();
 
-    const match = searchData.results[0];
+    const match =
+      searchData.results[0];
 
     if (!match) {
       return null;
     }
 
-    const releaseResponse = await fetch(
-      `https://api.themoviedb.org/3/movie/${match.id}/release_dates`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          accept: "application/json",
+    const releaseResponse =
+      await fetch(
+        `https://api.themoviedb.org/3/movie/${match.id}/release_dates`,
+        {
+          headers: {
+            Authorization:
+              `Bearer ${token}`,
+
+            accept:
+              "application/json",
+          },
+
+          cache:
+            "no-store",
         },
-        cache: "no-store",
-      },
-    );
+      );
 
-    let theatricalRelease: ReleaseMatch | null = null;
-    let digitalRelease: ReleaseMatch | null = null;
-    let physicalRelease: ReleaseMatch | null = null;
+    let theatricalRelease:
+      ReleaseMatch | null =
+      null;
 
-    if (releaseResponse.ok) {
-      const releaseData: TmdbReleaseDatesResponse =
+    let digitalRelease:
+      ReleaseMatch | null =
+      null;
+
+    let physicalRelease:
+      ReleaseMatch | null =
+      null;
+
+    if (
+      releaseResponse.ok
+    ) {
+      const releaseData:
+        TmdbReleaseDatesResponse =
         await releaseResponse.json();
 
       // TMDB release types:
@@ -223,51 +322,74 @@ async function findTmdbMovie(
       // 5 = Physical
 
       theatricalRelease =
-        firstReleaseForType(releaseData, 3) ??
-        firstReleaseForType(releaseData, 2);
+        firstReleaseForType(
+          releaseData,
+          3,
+        ) ??
+        firstReleaseForType(
+          releaseData,
+          2,
+        );
 
-      digitalRelease = firstReleaseForType(
-        releaseData,
-        4,
-      );
+      digitalRelease =
+        firstReleaseForType(
+          releaseData,
+          4,
+        );
 
-      physicalRelease = firstReleaseForType(
-        releaseData,
-        5,
-      );
+      physicalRelease =
+        firstReleaseForType(
+          releaseData,
+          5,
+        );
     }
 
     return {
-      id: match.id,
-      posterPath: match.poster_path ?? null,
+      id:
+        match.id,
+
+      posterPath:
+        match.poster_path ??
+        null,
 
       theatricalReleaseDate:
-        theatricalRelease?.date ?? null,
+        theatricalRelease
+          ?.date ?? null,
 
       theatricalReleaseRegion:
-        theatricalRelease?.region ?? null,
+        theatricalRelease
+          ?.region ?? null,
 
       digitalReleaseDate:
-        digitalRelease?.date ?? null,
+        digitalRelease
+          ?.date ?? null,
 
       digitalReleaseRegion:
-        digitalRelease?.region ?? null,
+        digitalRelease
+          ?.region ?? null,
 
       physicalReleaseDate:
-        physicalRelease?.date ?? null,
+        physicalRelease
+          ?.date ?? null,
 
       physicalReleaseRegion:
-        physicalRelease?.region ?? null,
+        physicalRelease
+          ?.region ?? null,
     };
   } catch (error) {
-    console.error("TMDB movie lookup failed:", error);
+    console.error(
+      "TMDB movie lookup failed:",
+      error,
+    );
+
     return null;
   }
 }
 
 function getRelevantRelease(
   signal: Signal,
-  tmdbMatch: TmdbMatch | null,
+  tmdbMatch:
+    TmdbMatch | null,
 ): ReleaseMatch | null {
   if (!tmdbMatch) {
     return null;
@@ -275,186 +397,497 @@ function getRelevantRelease(
 
   if (
     signal === "CAM" &&
-    tmdbMatch.theatricalReleaseDate &&
-    tmdbMatch.theatricalReleaseRegion
+    tmdbMatch
+      .theatricalReleaseDate &&
+    tmdbMatch
+      .theatricalReleaseRegion
   ) {
     return {
-      date: tmdbMatch.theatricalReleaseDate,
-      region: tmdbMatch.theatricalReleaseRegion,
+      date:
+        tmdbMatch
+          .theatricalReleaseDate,
+
+      region:
+        tmdbMatch
+          .theatricalReleaseRegion,
     };
   }
 
   if (
     signal === "WEB" &&
-    tmdbMatch.digitalReleaseDate &&
-    tmdbMatch.digitalReleaseRegion
+    tmdbMatch
+      .digitalReleaseDate &&
+    tmdbMatch
+      .digitalReleaseRegion
   ) {
     return {
-      date: tmdbMatch.digitalReleaseDate,
-      region: tmdbMatch.digitalReleaseRegion,
+      date:
+        tmdbMatch
+          .digitalReleaseDate,
+
+      region:
+        tmdbMatch
+          .digitalReleaseRegion,
     };
   }
 
   return null;
 }
 
+function getLatestFeedItem(
+  items: RawFeedItem[],
+) {
+  let latestTimestamp =
+    Number.NEGATIVE_INFINITY;
+
+  let latestTitle:
+    string | null =
+    null;
+
+  let latestPublishedAt:
+    string | null =
+    null;
+
+  items.forEach(
+    (item) => {
+      const publishedAt =
+        String(
+          item.pubDate ?? "",
+        ).trim();
+
+      if (!publishedAt) {
+        return;
+      }
+
+      const parsedDate =
+        new Date(
+          publishedAt,
+        );
+
+      const timestamp =
+        parsedDate.getTime();
+
+      if (
+        Number.isNaN(
+          timestamp,
+        )
+      ) {
+        return;
+      }
+
+      if (
+        timestamp >
+        latestTimestamp
+      ) {
+        latestTimestamp =
+          timestamp;
+
+        latestPublishedAt =
+          parsedDate.toISOString();
+
+        latestTitle =
+          String(
+            item.title ??
+              "Unknown title",
+          );
+      }
+    },
+  );
+
+  return {
+    title:
+      latestTitle,
+
+    publishedAt:
+      latestPublishedAt,
+  };
+}
+
+async function recordSuccessSafely({
+  checkedAt,
+  latestItemPublishedAt,
+  latestItemTitle,
+  itemCount,
+}: {
+  checkedAt: string;
+  latestItemPublishedAt:
+    string | null;
+  latestItemTitle:
+    string | null;
+  itemCount: number;
+}) {
+  try {
+    await recordFeedSuccess({
+      source:
+        FEED_SOURCE,
+
+      checkedAt,
+
+      latestItemPublishedAt,
+      latestItemTitle,
+
+      itemCount,
+    });
+  } catch (error) {
+    console.error(
+      "CinemaCity feed status could not be saved:",
+      error,
+    );
+  }
+}
+
+async function recordFailureSafely({
+  checkedAt,
+  error,
+}: {
+  checkedAt: string;
+  error: string;
+}) {
+  try {
+    await recordFeedFailure({
+      source:
+        FEED_SOURCE,
+
+      checkedAt,
+      error,
+    });
+  } catch (
+    statusError
+  ) {
+    console.error(
+      "CinemaCity feed failure status could not be saved:",
+      statusError,
+    );
+  }
+}
+
 export async function getCinemaCityMovies(): Promise<
   CinemaCityMovie[]
 > {
-  const feedUrl = "https://cinemacity.cc/movies/rss.xml";
+  const feedUrl =
+    "https://cinemacity.cc/movies/rss.xml";
+
+  let feedLoaded =
+    false;
 
   try {
-    const response = await fetch(feedUrl, {
-      headers: {
-        "User-Agent": "ReleaseTrace/1.0",
-      },
-      cache: "no-store",
-    });
+    const response =
+      await fetch(
+        feedUrl,
+        {
+          headers: {
+            "User-Agent":
+              "ShadowWindow/1.0",
+          },
+
+          cache:
+            "no-store",
+        },
+      );
 
     if (!response.ok) {
+      const checkedAt =
+        new Date()
+          .toISOString();
+
+      await recordFailureSafely({
+        checkedAt,
+
+        error:
+          `RSS request failed with status ${response.status}.`,
+      });
+
       return [];
     }
 
-    const feedText = await response.text();
+    const feedText =
+      await response.text();
 
-    const parser = new XMLParser();
-    const parsedFeed = parser.parse(feedText);
+    const parser =
+      new XMLParser();
 
-    const rawItems = parsedFeed?.rss?.channel?.item ?? [];
+    const parsedFeed =
+      parser.parse(
+        feedText,
+      );
 
-    const items = Array.isArray(rawItems)
-      ? rawItems
-      : [rawItems];
+    const rawItems =
+      parsedFeed
+        ?.rss
+        ?.channel
+        ?.item ?? [];
 
-    const movies = await Promise.all(
-      items.map(async (item) => {
-        const title = String(
-          item.title ?? "Unknown title",
-        );
+    const items:
+      RawFeedItem[] =
+      Array.isArray(
+        rawItems,
+      )
+        ? rawItems
+        : [rawItems];
 
-        const normalizedTitle = normalizeTitle(title);
+    feedLoaded = true;
 
-        const quality = String(
-          item.quality ?? "Unknown",
-        );
+    const latestFeedItem =
+      getLatestFeedItem(
+        items,
+      );
 
-        const year = String(
-          item.year ?? "Unknown",
-        );
+    await recordSuccessSafely({
+      checkedAt:
+        new Date()
+          .toISOString(),
 
-        const country = String(
-          item.country ?? "Unknown",
-        );
+      latestItemPublishedAt:
+        latestFeedItem
+          .publishedAt,
 
-        const publishedAt = String(
-          item.pubDate ?? "Unknown",
-        );
+      latestItemTitle:
+        latestFeedItem
+          .title,
 
-        const sourceUrl = String(
-          item.link ?? "",
-        );
+      itemCount:
+        items.length,
+    });
 
-        const signal = classifyQuality(quality);
+    const movies =
+      await Promise.all(
+        items.map(
+          async (item) => {
+            const title =
+              String(
+                item.title ??
+                  "Unknown title",
+              );
 
-        const tmdbMatch = await findTmdbMovie(
-          normalizedTitle,
-          year,
-        );
+            const normalizedTitle =
+              normalizeTitle(
+                title,
+              );
 
-        const relevantRelease = getRelevantRelease(
-          signal,
-          tmdbMatch,
-        );
+            const quality =
+              String(
+                item.quality ??
+                  "Unknown",
+              );
 
-        const movie: CinemaCityMovie = {
-          title,
-          normalizedTitle,
+            const year =
+              String(
+                item.year ??
+                  "Unknown",
+              );
 
-          tmdbId: tmdbMatch?.id ?? null,
-          posterPath: tmdbMatch?.posterPath ?? null,
+            const country =
+              String(
+                item.country ??
+                  "Unknown",
+              );
 
-          theatricalReleaseDate:
-            tmdbMatch?.theatricalReleaseDate ?? null,
+            const publishedAt =
+              String(
+                item.pubDate ??
+                  "Unknown",
+              );
 
-          theatricalReleaseRegion:
-            tmdbMatch?.theatricalReleaseRegion ?? null,
+            const sourceUrl =
+              String(
+                item.link ??
+                  "",
+              );
 
-          digitalReleaseDate:
-            tmdbMatch?.digitalReleaseDate ?? null,
+            const signal =
+              classifyQuality(
+                quality,
+              );
 
-          digitalReleaseRegion:
-            tmdbMatch?.digitalReleaseRegion ?? null,
+            const tmdbMatch =
+              await findTmdbMovie(
+                normalizedTitle,
+                year,
+              );
 
-          physicalReleaseDate:
-            tmdbMatch?.physicalReleaseDate ?? null,
+            const relevantRelease =
+              getRelevantRelease(
+                signal,
+                tmdbMatch,
+              );
 
-          physicalReleaseRegion:
-            tmdbMatch?.physicalReleaseRegion ?? null,
+            const movie:
+              CinemaCityMovie =
+              {
+                title,
+                normalizedTitle,
 
-          tmdbReleaseDate:
-            relevantRelease?.date ?? null,
+                tmdbId:
+                  tmdbMatch
+                    ?.id ??
+                  null,
 
-          tmdbReleaseRegion:
-            relevantRelease?.region ?? null,
+                posterPath:
+                  tmdbMatch
+                    ?.posterPath ??
+                  null,
 
-          quality,
-          signal,
+                theatricalReleaseDate:
+                  tmdbMatch
+                    ?.theatricalReleaseDate ??
+                  null,
 
-          year,
-          country,
-          publishedAt,
-          sourceUrl,
-        };
+                theatricalReleaseRegion:
+                  tmdbMatch
+                    ?.theatricalReleaseRegion ??
+                  null,
 
-        if (signal !== "OTHER") {
-          await saveCloudDetection({
-            tmdbId: movie.tmdbId,
-            title: movie.normalizedTitle,
-            year: movie.year,
+                digitalReleaseDate:
+                  tmdbMatch
+                    ?.digitalReleaseDate ??
+                  null,
 
-            detectionType: movie.signal,
-            quality: movie.quality,
+                digitalReleaseRegion:
+                  tmdbMatch
+                    ?.digitalReleaseRegion ??
+                  null,
 
-            detectedAt: movie.publishedAt,
+                physicalReleaseDate:
+                  tmdbMatch
+                    ?.physicalReleaseDate ??
+                  null,
 
-            theatricalReleaseDate:
-              movie.theatricalReleaseDate,
+                physicalReleaseRegion:
+                  tmdbMatch
+                    ?.physicalReleaseRegion ??
+                  null,
 
-            theatricalReleaseRegion:
-              movie.theatricalReleaseRegion,
+                tmdbReleaseDate:
+                  relevantRelease
+                    ?.date ??
+                  null,
 
-            digitalReleaseDate:
-              movie.digitalReleaseDate,
+                tmdbReleaseRegion:
+                  relevantRelease
+                    ?.region ??
+                  null,
 
-            digitalReleaseRegion:
-              movie.digitalReleaseRegion,
+                quality,
+                signal,
 
-            physicalReleaseDate:
-              movie.physicalReleaseDate,
+                year,
+                country,
+                publishedAt,
 
-            physicalReleaseRegion:
-              movie.physicalReleaseRegion,
+                sourceUrl,
+              };
 
-            posterPath: movie.posterPath,
+            if (
+              signal !==
+              "OTHER"
+            ) {
+              await saveCloudDetection(
+                {
+                  tmdbId:
+                    movie.tmdbId,
 
-            source: "CinemaCity",
-            sourceUrl: movie.sourceUrl,
-          });
+                  title:
+                    movie.normalizedTitle,
+
+                  year:
+                    movie.year,
+
+                  detectionType:
+                    movie.signal,
+
+                  quality:
+                    movie.quality,
+
+                  detectedAt:
+                    movie.publishedAt,
+
+                  theatricalReleaseDate:
+                    movie
+                      .theatricalReleaseDate,
+
+                  theatricalReleaseRegion:
+                    movie
+                      .theatricalReleaseRegion,
+
+                  digitalReleaseDate:
+                    movie
+                      .digitalReleaseDate,
+
+                  digitalReleaseRegion:
+                    movie
+                      .digitalReleaseRegion,
+
+                  physicalReleaseDate:
+                    movie
+                      .physicalReleaseDate,
+
+                  physicalReleaseRegion:
+                    movie
+                      .physicalReleaseRegion,
+
+                  posterPath:
+                    movie.posterPath,
+
+                  source:
+                    "CinemaCity",
+
+                  sourceUrl:
+                    movie.sourceUrl,
+                },
+              );
+            }
+
+            return movie;
+          },
+        ),
+      );
+
+    return movies.filter(
+      (movie) => {
+        if (
+          movie.signal ===
+          "OTHER"
+        ) {
+          return false;
         }
 
-        return movie;
-      }),
+        return isRecentRelease(
+          movie.tmdbReleaseDate,
+        );
+      },
+    );
+  } catch (error) {
+    console.error(
+      "CinemaCity ingestion failed:",
+      error,
     );
 
-    return movies.filter((movie) => {
-      if (movie.signal === "OTHER") {
-        return false;
-      }
+    /*
+     * Only mark the RSS itself as
+     * failed when we never successfully
+     * fetched and parsed the feed.
+     *
+     * A later TMDB/database problem
+     * should not make the RSS health
+     * indicator falsely say the feed
+     * itself is down.
+     */
+    if (!feedLoaded) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unknown CinemaCity RSS error.";
 
-      return isRecentRelease(movie.tmdbReleaseDate);
-    });
-  } catch (error) {
-    console.error("CinemaCity fetch failed:", error);
+      await recordFailureSafely({
+        checkedAt:
+          new Date()
+            .toISOString(),
+
+        error:
+          message,
+      });
+    }
+
     return [];
   }
 }

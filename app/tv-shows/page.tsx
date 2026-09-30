@@ -3,30 +3,25 @@ import TitleBrowser, {
   type BrowseTitle,
 } from "../../components/TitleBrowser";
 
-type Region = "US" | "CA";
-
-type TmdbMovie = {
+type TmdbShow = {
   id: number;
-  title: string;
+  name: string;
   overview: string;
-  release_date: string;
+  first_air_date: string;
   poster_path: string | null;
   vote_average: number;
   vote_count: number;
+  origin_country: string[];
 };
 
 type TmdbResponse = {
   page: number;
   total_pages: number;
   total_results: number;
-  results: TmdbMovie[];
+  results: TmdbShow[];
 };
 
-type MovieWithRegions = TmdbMovie & {
-  regions: Region[];
-};
-
-type MoviesPageProps = {
+type TVShowsPageProps = {
   searchParams: Promise<{
     page?: string;
     view?: string;
@@ -60,8 +55,7 @@ function parsePage(
   return parsed;
 }
 
-async function fetchMoviePage(
-  region: Region,
+async function fetchShowPage(
   page: number,
 ): Promise<TmdbResponse> {
   const token =
@@ -73,32 +67,36 @@ async function fetchMoviePage(
     );
   }
 
-  const params = new URLSearchParams({
-    language: "en-US",
-    page: String(page),
-    region,
+  const params =
+    new URLSearchParams({
+      language: "en-US",
 
-    sort_by:
-      "primary_release_date.desc",
+      page: String(page),
 
-    include_adult: "false",
-    include_video: "false",
+      sort_by:
+        "first_air_date.desc",
 
-    with_release_type: "2|3",
+      include_adult:
+        "false",
 
-    with_original_language: "en",
+      include_null_first_air_dates:
+        "false",
 
-    with_origin_country:
-      WESTERN_ORIGINS,
+      with_original_language:
+        "en",
 
-    "vote_count.gte": "20",
+      with_origin_country:
+        WESTERN_ORIGINS,
 
-    "release_date.lte":
-      getToday(),
-  });
+      "vote_count.gte":
+        "20",
+
+      "first_air_date.lte":
+        getToday(),
+    });
 
   const response = await fetch(
-    `https://api.themoviedb.org/3/discover/movie?${params.toString()}`,
+    `https://api.themoviedb.org/3/discover/tv?${params.toString()}`,
     {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -113,61 +111,23 @@ async function fetchMoviePage(
 
   if (!response.ok) {
     throw new Error(
-      `TMDB movie request for ${region} failed with status ${response.status}.`,
+      `TMDB TV request failed with status ${response.status}.`,
     );
   }
 
   return response.json();
 }
 
-function addMoviesToMap(
-  map: Map<
-    number,
-    MovieWithRegions
-  >,
-  movies: TmdbMovie[],
-  region: Region,
+function sortShows(
+  shows: TmdbShow[],
 ) {
-  movies.forEach((movie) => {
-    if (
-      !movie.poster_path ||
-      !movie.release_date
-    ) {
-      return;
-    }
-
-    const existing =
-      map.get(movie.id);
-
-    if (existing) {
-      if (
-        !existing.regions.includes(
-          region,
-        )
-      ) {
-        existing.regions.push(region);
-      }
-
-      return;
-    }
-
-    map.set(movie.id, {
-      ...movie,
-      regions: [region],
-    });
-  });
-}
-
-function sortMovies(
-  movies: MovieWithRegions[],
-) {
-  return movies.sort((a, b) => {
+  return shows.sort((a, b) => {
     const aTime = new Date(
-      `${a.release_date}T00:00:00Z`,
+      `${a.first_air_date}T00:00:00Z`,
     ).getTime();
 
     const bTime = new Date(
-      `${b.release_date}T00:00:00Z`,
+      `${b.first_air_date}T00:00:00Z`,
     ).getTime();
 
     if (bTime !== aTime) {
@@ -181,15 +141,15 @@ function sortMovies(
   });
 }
 
-async function getCuratedMovies(
+async function getCuratedShows(
   requestedPage: number,
 ) {
   const requiredCount =
     requestedPage * PAGE_SIZE;
 
-  const movieMap = new Map<
+  const showMap = new Map<
     number,
-    MovieWithRegions
+    TmdbShow
   >();
 
   let tmdbPage = 1;
@@ -197,68 +157,56 @@ async function getCuratedMovies(
   let reachedEnd = false;
 
   while (
-    movieMap.size <
+    showMap.size <
       requiredCount &&
     tmdbPage <=
       MAX_TMDB_PAGES &&
     !reachedEnd
   ) {
-    const [usData, canadaData] =
-      await Promise.all([
-        fetchMoviePage(
-          "US",
-          tmdbPage,
-        ),
-
-        fetchMoviePage(
-          "CA",
-          tmdbPage,
-        ),
-      ]);
-
-    totalResults = Math.max(
-      totalResults,
-      usData.total_results,
-      canadaData.total_results,
-    );
-
-    addMoviesToMap(
-      movieMap,
-      usData.results,
-      "US",
-    );
-
-    addMoviesToMap(
-      movieMap,
-      canadaData.results,
-      "CA",
-    );
-
-    const lastUsPage =
-      tmdbPage >=
-      Math.min(
-        usData.total_pages,
-        500,
+    const data =
+      await fetchShowPage(
+        tmdbPage,
       );
 
-    const lastCanadaPage =
-      tmdbPage >=
-      Math.min(
-        canadaData.total_pages,
-        500,
-      );
+    totalResults =
+      data.total_results;
+
+    data.results.forEach(
+      (show) => {
+        if (
+          !show.poster_path ||
+          !show.first_air_date
+        ) {
+          return;
+        }
+
+        if (
+          !showMap.has(
+            show.id,
+          )
+        ) {
+          showMap.set(
+            show.id,
+            show,
+          );
+        }
+      },
+    );
 
     reachedEnd =
-      lastUsPage &&
-      lastCanadaPage;
+      tmdbPage >=
+      Math.min(
+        data.total_pages,
+        500,
+      );
 
     tmdbPage += 1;
   }
 
-  const allMovies =
-    sortMovies(
+  const allShows =
+    sortShows(
       Array.from(
-        movieMap.values(),
+        showMap.values(),
       ),
     );
 
@@ -269,8 +217,8 @@ async function getCuratedMovies(
   const end =
     start + PAGE_SIZE;
 
-  const pageMovies =
-    allMovies.slice(
+  const pageShows =
+    allShows.slice(
       start,
       end,
     );
@@ -284,27 +232,27 @@ async function getCuratedMovies(
   );
 
   return {
-    movies: pageMovies,
+    shows: pageShows,
     totalPages,
     totalResults,
   };
 }
 
-function formatRegions(
-  regions: Region[],
+function formatCountries(
+  countries: string[],
 ) {
-  return regions
-    .map((region) =>
-      region === "US"
-        ? "US"
-        : "Canada",
-    )
+  if (!countries.length) {
+    return null;
+  }
+
+  return countries
+    .slice(0, 2)
     .join(" • ");
 }
 
-export default async function MoviesPage({
+export default async function TVShowsPage({
   searchParams,
-}: MoviesPageProps) {
+}: TVShowsPageProps) {
   const params =
     await searchParams;
 
@@ -312,10 +260,10 @@ export default async function MoviesPage({
     parsePage(params.page);
 
   const {
-    movies,
+    shows,
     totalPages,
     totalResults,
-  } = await getCuratedMovies(
+  } = await getCuratedShows(
     requestedPage,
   );
 
@@ -325,39 +273,39 @@ export default async function MoviesPage({
   );
 
   const items: BrowseTitle[] =
-    movies.map((movie) => ({
-      id: movie.id,
+    shows.map((show) => ({
+      id: show.id,
 
-      title: movie.title,
+      title: show.name,
 
       overview:
-        movie.overview,
+        show.overview,
 
       posterPath:
-        movie.poster_path,
+        show.poster_path,
 
       date:
-        movie.release_date,
+        show.first_air_date,
 
       dateLabel:
-        "Theatrical",
+        "First Aired",
 
       categoryLabel:
-        "Movie",
+        "TV",
 
       regionLabel:
-        formatRegions(
-          movie.regions,
+        formatCountries(
+          show.origin_country,
         ),
 
       rating:
-        movie.vote_average,
+        show.vote_average,
 
       voteCount:
-        movie.vote_count,
+        show.vote_count,
 
       href:
-        `/movies/${movie.id}`,
+        `/tv-shows/${show.id}`,
     }));
 
   const initialView =
@@ -375,12 +323,12 @@ export default async function MoviesPage({
         </p>
 
         <h1 className="mt-3 text-4xl font-bold tracking-tight">
-          Movies
+          TV Shows
         </h1>
 
         <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
           Recent English-language
-          theatrical releases focused
+          television releases focused
           on the US, Canada and major
           Western markets.
         </p>
@@ -394,16 +342,15 @@ export default async function MoviesPage({
           totalResults={
             totalResults
           }
-          basePath="/movies"
+          basePath="/tv-shows"
           initialView={
             initialView
           }
         />
 
         <p className="mt-10 text-xs text-zinc-700">
-          Movie metadata, ratings
-          and images provided by
-          TMDB.
+          TV metadata, ratings and
+          images provided by TMDB.
         </p>
       </section>
     </main>
