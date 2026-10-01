@@ -754,14 +754,14 @@ function getBackDestination(
 ) {
   if (
     from ===
-      "shadow-zone" ||
+      "leak-detections" ||
     referer.includes(
-      "/shadow-zone",
+      "/leak-detections",
     )
   ) {
     return {
       href:
-        "/shadow-zone",
+        "/leak-detections",
 
       label:
         "Back to Shadow Zone",
@@ -1211,7 +1211,7 @@ export default async function MoviePage({
         <p className="mt-12 border-t border-zinc-900 pt-5 text-xs text-zinc-500">
           Movie metadata, ratings and
           images provided by TMDB.
-          ShadowWindow detection data is
+          Watch Leaks detection data is
           derived from monitored
           unauthorized-availability
           observations.
@@ -1605,7 +1605,7 @@ function DetectionHistory({
       0 ? (
         <div className="border-b border-zinc-900 py-4">
           <p className="text-sm font-medium text-zinc-300">
-            No ShadowWindow detection
+            No Watch Leaks detection
             data is currently connected
             to this title.
           </p>

@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "ShadowWindow",
-    template: "%s | ShadowWindow",
+    default: "Watch Leaks",
+    template: "%s | Watch Leaks",
   },
   description:
     "Track theatrical, digital, physical, streaming, and unauthorized availability across film and television.",

@@ -26,8 +26,13 @@ import {
 } from "../../lib/feedStatus";
 
 import {
+  getLiveMatchReviewCandidates,
+} from "../../lib/matchReviewCandidates";
+
+import {
   getAdminMatchReviewsPage,
   markMatchReviewIgnored,
+  type MatchReviewCandidate,
   type MatchReviewReason,
 } from "../../lib/matchReviews";
 
@@ -41,16 +46,22 @@ export const dynamic =
 type AdminPageProps = {
   searchParams: Promise<{
     type?: string;
+
     page?: string;
+
     reviewPage?: string;
 
     reviewMessage?: string;
+
     reviewError?: string;
   }>;
 };
 
-const DETECTION_LIMIT = 50;
-const REVIEW_LIMIT = 25;
+const DETECTION_LIMIT =
+  50;
+
+const REVIEW_LIMIT =
+  25;
 
 function createAdminSessionToken() {
   const sessionSecret =
@@ -160,8 +171,24 @@ async function updateMatchReview(
       ) ?? "",
     );
 
+  const selectedTmdbIdValue =
+    String(
+      formData.get(
+        "selectedTmdbId",
+      ) ?? "",
+    ).trim();
+
+  const selectedTmdbId =
+    selectedTmdbIdValue
+      ? Number(
+          selectedTmdbIdValue,
+        )
+      : undefined;
+
   if (
-    !Number.isInteger(id) ||
+    !Number.isInteger(
+      id,
+    ) ||
     id < 1
   ) {
     redirect(
@@ -170,19 +197,43 @@ async function updateMatchReview(
   }
 
   if (
+    selectedTmdbId !==
+      undefined &&
+    (
+      !Number.isInteger(
+        selectedTmdbId,
+      ) ||
+      selectedTmdbId <
+        1
+    )
+  ) {
+    redirect(
+      "/admin?reviewError=Invalid%20TMDB%20candidate%20ID#reviews",
+    );
+  }
+
+  if (
     action ===
     "APPROVE"
   ) {
-    let result;
+    let result:
+      Awaited<
+        ReturnType<
+          typeof approveMatchReview
+        >
+      >;
 
     try {
       result =
         await approveMatchReview(
           id,
+
+          selectedTmdbId,
         );
     } catch (error) {
       const message =
-        error instanceof Error
+        error instanceof
+        Error
           ? error.message
           : "Match approval failed.";
 
@@ -202,7 +253,7 @@ async function updateMatchReview(
     );
 
     revalidatePath(
-      "/shadow-zone",
+      "/leak-detections",
     );
 
     if (!result.success) {
@@ -378,9 +429,19 @@ function formatReleaseDate(
     return "Unavailable";
   }
 
+  const normalized =
+    value.includes(
+      "T",
+    )
+      ? value.slice(
+          0,
+          10,
+        )
+      : value;
+
   const date =
     new Date(
-      `${value}T00:00:00Z`,
+      `${normalized}T00:00:00Z`,
     );
 
   if (
@@ -566,7 +627,9 @@ function getDetectionRelease(
 
 function getDetectionHref({
   type,
+
   page,
+
   reviewPage,
 }: {
   type?:
@@ -622,7 +685,9 @@ function getDetectionHref({
 
 function getReviewHref({
   type,
+
   page,
+
   reviewPage,
 }: {
   type?:
@@ -737,10 +802,13 @@ function getReviewReasonClass(
 
 function formatConfidence(
   value:
-    number | null,
+    number | null | undefined,
 ) {
   if (
-    value === null ||
+    value ===
+      null ||
+    value ===
+      undefined ||
     !Number.isFinite(
       value,
     )
@@ -751,6 +819,61 @@ function formatConfidence(
   return `${Math.round(
     value,
   )}%`;
+}
+
+function getCandidatePosterUrl(
+  candidate:
+    MatchReviewCandidate,
+) {
+  if (
+    !candidate.posterPath
+  ) {
+    return null;
+  }
+
+  return `https://image.tmdb.org/t/p/w185${candidate.posterPath}`;
+}
+
+function formatCandidateCountries(
+  candidate:
+    MatchReviewCandidate,
+) {
+  if (
+    !candidate
+      .originCountries ||
+    candidate
+      .originCountries
+      .length ===
+      0
+  ) {
+    return "—";
+  }
+
+  return candidate
+    .originCountries
+    .join(
+      ", ",
+    );
+}
+
+function formatCandidateGenres(
+  candidate:
+    MatchReviewCandidate,
+) {
+  if (
+    !candidate.genres ||
+    candidate.genres
+      .length ===
+      0
+  ) {
+    return "—";
+  }
+
+  return candidate
+    .genres
+    .join(
+      ", ",
+    );
 }
 
 export default async function AdminPage({
@@ -804,32 +927,125 @@ export default async function AdminPage({
     cinemaCityStatus,
     detectionPage,
     reviewPage,
-  ] = await Promise.all([
-    getFeedStatus(
-      "CinemaCity",
-    ),
+  ] =
+    await Promise.all([
+      getFeedStatus(
+        "CinemaCity",
+      ),
 
-    getCloudAdminDetectionsPage({
-      limit:
-        DETECTION_LIMIT,
+      getCloudAdminDetectionsPage({
+        limit:
+          DETECTION_LIMIT,
 
-      offset:
-        detectionOffset,
+        offset:
+          detectionOffset,
 
-      detectionType,
-    }),
+        detectionType,
+      }),
 
-    getAdminMatchReviewsPage({
-      limit:
-        REVIEW_LIMIT,
+      getAdminMatchReviewsPage({
+        limit:
+          REVIEW_LIMIT,
 
-      offset:
-        reviewOffset,
+        offset:
+          reviewOffset,
 
-      status:
-        "PENDING",
-    }),
-  ]);
+        status:
+          "PENDING",
+      }),
+    ]);
+
+  /*
+   * Ambiguous legacy reviews may only
+   * have one old candidate saved in the
+   * database.
+   *
+   * Refresh those reviews against TMDB
+   * so Admin can see the actual competing
+   * choices with current posters and
+   * metadata.
+   *
+   * If TMDB is temporarily unavailable,
+   * fall back to whatever was already
+   * stored in the review rather than
+   * breaking the Admin dashboard.
+   */
+  const reviewsWithCandidates =
+    await Promise.all(
+      reviewPage.reviews.map(
+        async (
+          review,
+        ) => {
+          const storedCandidates =
+            review.candidateOptions ??
+            [];
+
+          if (
+            review.reason !==
+            "AMBIGUOUS"
+          ) {
+            return {
+              review,
+
+              candidates:
+                storedCandidates,
+
+              refreshed:
+                false,
+            };
+          }
+
+          try {
+            const liveCandidates =
+              await getLiveMatchReviewCandidates({
+                normalizedTitle:
+                  review.normalizedTitle,
+
+                year:
+                  review.year,
+
+                sourceDescription:
+                  review.sourceDescription ??
+                  null,
+
+                candidateTmdbId:
+                  review.candidateTmdbId,
+              });
+
+            if (
+              liveCandidates.length >
+              0
+            ) {
+              return {
+                review,
+
+                candidates:
+                  liveCandidates,
+
+                refreshed:
+                  true,
+              };
+            }
+          } catch (error) {
+            console.error(
+              `Unable to refresh TMDB candidates for match review ${review.id}.`,
+
+              error,
+            );
+          }
+
+          return {
+            review,
+
+            candidates:
+              storedCandidates,
+
+            refreshed:
+              false,
+          };
+        },
+      ),
+    );
 
   const feedHealth =
     getFeedHealth(
@@ -868,7 +1084,7 @@ export default async function AdminPage({
         <div className="mx-auto flex w-full max-w-[1600px] items-center justify-between px-4 py-2.5">
           <div className="flex items-center gap-3">
             <span className="text-sm font-bold">
-              ShadowWindow
+              Watch Leaks
             </span>
 
             <span className="text-[9px] font-bold uppercase tracking-[0.16em] text-red-500">
@@ -878,7 +1094,7 @@ export default async function AdminPage({
 
           <div className="flex items-center gap-4 text-xs">
             <a
-              href="/shadow-zone"
+              href="/leak-detections"
               className="text-zinc-400 transition hover:text-white"
             >
               Public Site
@@ -1134,280 +1350,461 @@ export default async function AdminPage({
             </div>
           )}
 
-          {reviewPage
-            .reviews
+          {reviewsWithCandidates
             .length ===
           0 ? (
             <div className="border-y border-zinc-900 py-2 text-xs text-emerald-400">
               No pending match reviews.
             </div>
           ) : (
-            <div className="overflow-x-auto border-t border-zinc-800">
-              <div className="min-w-[1180px]">
-                <div className="grid grid-cols-[115px_minmax(210px,1.4fr)_85px_95px_minmax(180px,1.1fr)_70px_110px_minmax(180px,1.2fr)_210px] items-center gap-2 border-b border-zinc-700 py-1.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
-                  <div>
-                    Issue
+            <div className="border-t border-zinc-800">
+              <div className="overflow-x-auto">
+                <div className="min-w-[1180px]">
+                  <div className="grid grid-cols-[115px_minmax(210px,1.4fr)_85px_75px_minmax(185px,1.1fr)_70px_110px_minmax(180px,1.2fr)_210px] items-center gap-2 border-b border-zinc-700 py-1.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+                    <div>
+                      Issue
+                    </div>
+
+                    <div>
+                      Title
+                    </div>
+
+                    <div>
+                      Type
+                    </div>
+
+                    <div>
+                      Year
+                    </div>
+
+                    <div>
+                      TMDB
+                    </div>
+
+                    <div>
+                      Match
+                    </div>
+
+                    <div>
+                      Published
+                    </div>
+
+                    <div>
+                      Diagnostic
+                    </div>
+
+                    <div className="text-right">
+                      Actions
+                    </div>
                   </div>
 
-                  <div>
-                    Title
-                  </div>
-
-                  <div>
-                    Type
-                  </div>
-
-                  <div>
-                    Year
-                  </div>
-
-                  <div>
-                    TMDB Candidate
-                  </div>
-
-                  <div>
-                    Match
-                  </div>
-
-                  <div>
-                    Published
-                  </div>
-
-                  <div>
-                    Diagnostic
-                  </div>
-
-                  <div className="text-right">
-                    Actions
-                  </div>
-                </div>
-
-                {reviewPage
-                  .reviews
-                  .map(
-                    (
+                  {reviewsWithCandidates.map(
+                    ({
                       review,
-                    ) => (
-                      <div
-                        key={
-                          review.id
-                        }
-                        className="grid min-h-11 grid-cols-[115px_minmax(210px,1.4fr)_85px_95px_minmax(180px,1.1fr)_70px_110px_minmax(180px,1.2fr)_210px] items-center gap-2 border-b border-zinc-900 py-1.5 text-[11px]"
-                      >
-                        <div>
-                          <span
-                            className={`inline-block border px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide ${getReviewReasonClass(
-                              review.reason,
-                            )}`}
-                          >
-                            {
-                              formatReviewReason(
-                                review.reason,
-                              )
-                            }
-                          </span>
-                        </div>
+                      candidates,
+                      refreshed,
+                    }) => {
+                      const hasMultipleCandidates =
+                        candidates.length >
+                        1;
 
-                        <div className="min-w-0">
-                          <p className="truncate font-semibold text-white">
-                            {
-                              review
-                                .normalizedTitle
-                            }
-                          </p>
+                      const onlyCandidate =
+                        candidates.length ===
+                        1
+                          ? candidates[0]
+                          : null;
 
-                          {review.sourceTitle !==
-                            review.normalizedTitle && (
-                            <p
-                              className="truncate text-[9px] text-zinc-600"
+                      return (
+                        <div
+                          key={
+                            review.id
+                          }
+                          className="border-b border-zinc-900"
+                        >
+                          <div className="grid min-h-11 grid-cols-[115px_minmax(210px,1.4fr)_85px_75px_minmax(185px,1.1fr)_70px_110px_minmax(180px,1.2fr)_210px] items-center gap-2 py-1.5 text-[11px]">
+                            <div>
+                              <span
+                                className={`inline-block border px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide ${getReviewReasonClass(
+                                  review.reason,
+                                )}`}
+                              >
+                                {
+                                  formatReviewReason(
+                                    review.reason,
+                                  )
+                                }
+                              </span>
+                            </div>
+
+                            <div className="min-w-0">
+                              <p className="truncate font-semibold text-white">
+                                {
+                                  review
+                                    .normalizedTitle
+                                }
+                              </p>
+
+                              {review.sourceTitle !==
+                                review.normalizedTitle && (
+                                <p
+                                  className="truncate text-[9px] text-zinc-600"
+                                  title={
+                                    review.sourceTitle
+                                  }
+                                >
+                                  {
+                                    review
+                                      .sourceTitle
+                                  }
+                                </p>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-1">
+                              <span className="rounded-full border border-red-500/40 px-1.5 py-0.5 text-[8px] font-bold text-red-400">
+                                {
+                                  review
+                                    .detectionType
+                                }
+                              </span>
+
+                              <span className="truncate text-[9px] text-zinc-500">
+                                {
+                                  review.quality ??
+                                  "—"
+                                }
+                              </span>
+                            </div>
+
+                            <div className="text-[10px] text-zinc-300">
+                              {
+                                review.year ??
+                                "—"
+                              }
+                            </div>
+
+                            <div className="min-w-0">
+                              {hasMultipleCandidates ? (
+                                <>
+                                  <div className="flex items-center gap-1.5">
+                                    <p className="font-semibold text-amber-300">
+                                      {
+                                        candidates.length
+                                      }{" "}
+                                      candidates
+                                    </p>
+
+                                    {refreshed && (
+                                      <span className="border border-emerald-500/30 px-1 py-0.5 text-[7px] font-bold uppercase tracking-wide text-emerald-400">
+                                        Live TMDB
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <p className="truncate text-[9px] text-zinc-600">
+                                    Human selection required
+                                  </p>
+                                </>
+                              ) : onlyCandidate ? (
+                                <>
+                                  <div className="flex items-center gap-1.5">
+                                    <p className="truncate font-semibold text-zinc-200">
+                                      {
+                                        onlyCandidate.title
+                                      }
+                                    </p>
+
+                                    {refreshed && (
+                                      <span className="shrink-0 border border-emerald-500/30 px-1 py-0.5 text-[7px] font-bold uppercase tracking-wide text-emerald-400">
+                                        Live
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <p className="text-[9px] text-zinc-600">
+                                    TMDB{" "}
+                                    {
+                                      onlyCandidate.tmdbId
+                                    }
+                                    {onlyCandidate.year
+                                      ? ` · ${onlyCandidate.year}`
+                                      : ""}
+                                  </p>
+                                </>
+                              ) : review.candidateTmdbId ? (
+                                <>
+                                  <p className="truncate font-semibold text-zinc-200">
+                                    {
+                                      review.candidateTitle ??
+                                      `TMDB ${review.candidateTmdbId}`
+                                    }
+                                  </p>
+
+                                  <p className="text-[9px] text-zinc-600">
+                                    TMDB{" "}
+                                    {
+                                      review.candidateTmdbId
+                                    }
+                                    {review.candidateYear
+                                      ? ` · ${review.candidateYear}`
+                                      : ""}
+                                  </p>
+                                </>
+                              ) : (
+                                <span className="text-zinc-600">
+                                  No candidate
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="font-semibold text-zinc-200">
+                              {
+                                formatConfidence(
+                                  review.confidence,
+                                )
+                              }
+                            </div>
+
+                            <div className="text-[10px] leading-4 text-zinc-400">
+                              {
+                                formatDateTime(
+                                  review
+                                    .publishedAt,
+                                )
+                              }
+                            </div>
+
+                            <div
+                              className="truncate text-[10px] text-zinc-500"
                               title={
-                                review.sourceTitle
+                                review.details ??
+                                undefined
                               }
                             >
                               {
-                                review
-                                  .sourceTitle
+                                review.details ??
+                                "—"
                               }
-                            </p>
-                          )}
-                        </div>
+                            </div>
 
-                        <div className="flex items-center gap-1">
-                          <span className="rounded-full border border-red-500/40 px-1.5 py-0.5 text-[8px] font-bold text-red-400">
-                            {
-                              review
-                                .detectionType
-                            }
-                          </span>
+                            <div className="flex items-center justify-end gap-1">
+                              {review
+                                .sourceUrl && (
+                                <a
+                                  href={
+                                    review
+                                      .sourceUrl
+                                  }
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="border border-zinc-700 px-2 py-1 text-[9px] font-semibold text-zinc-400 transition hover:border-zinc-500 hover:text-white"
+                                >
+                                  Source
+                                </a>
+                              )}
 
-                          <span
-                            className="truncate text-[9px] text-zinc-500"
-                            title={
-                              review.quality ??
-                              undefined
-                            }
-                          >
-                            {
-                              review.quality ??
-                              "—"
-                            }
-                          </span>
-                        </div>
+                              {!hasMultipleCandidates &&
+                                (
+                                  onlyCandidate ||
+                                  review.candidateTmdbId
+                                ) && (
+                                <form
+                                  action={
+                                    updateMatchReview
+                                  }
+                                >
+                                  <input
+                                    type="hidden"
+                                    name="id"
+                                    value={
+                                      review.id
+                                    }
+                                  />
 
-                        <div className="text-zinc-300">
-                          {
-                            review.year ??
-                            "—"
-                          }
-                        </div>
+                                  <input
+                                    type="hidden"
+                                    name="action"
+                                    value="APPROVE"
+                                  />
 
-                        <div className="min-w-0">
-                          {review
-                            .candidateTmdbId ? (
-                            <>
-                              <p
-                                className="truncate font-medium text-zinc-100"
-                                title={
-                                  review
-                                    .candidateTitle ??
-                                  undefined
+                                  <input
+                                    type="hidden"
+                                    name="selectedTmdbId"
+                                    value={
+                                      onlyCandidate
+                                        ?.tmdbId ??
+                                      review
+                                        .candidateTmdbId ??
+                                      ""
+                                    }
+                                  />
+
+                                  <button
+                                    type="submit"
+                                    className="border border-emerald-500/50 px-2 py-1 text-[9px] font-bold text-emerald-300 transition hover:border-emerald-400 hover:text-emerald-200"
+                                  >
+                                    Approve
+                                  </button>
+                                </form>
+                              )}
+
+                              {hasMultipleCandidates && (
+                                <span className="border border-amber-400/40 px-2 py-1 text-[9px] font-bold text-amber-300">
+                                  Choose ↓
+                                </span>
+                              )}
+
+                              <form
+                                action={
+                                  updateMatchReview
                                 }
                               >
-                                {
-                                  review
-                                    .candidateTitle ??
-                                  "Unknown"
-                                }
-                              </p>
+                                <input
+                                  type="hidden"
+                                  name="id"
+                                  value={
+                                    review.id
+                                  }
+                                />
 
-                              <p className="text-[9px] text-zinc-600">
+                                <input
+                                  type="hidden"
+                                  name="action"
+                                  value="IGNORE"
+                                />
+
+                                <button
+                                  type="submit"
+                                  className="border border-zinc-800 px-2 py-1 text-[9px] font-semibold text-zinc-500 transition hover:border-zinc-600 hover:text-white"
+                                >
+                                  Ignore
+                                </button>
+                              </form>
+                            </div>
+                          </div>
+
+                          {candidates.length >
+                            0 && (
+                            <details className="border-t border-zinc-900 bg-zinc-950/30">
+                              <summary className="cursor-pointer select-none px-2 py-1.5 text-[10px] font-semibold text-zinc-400 transition hover:text-white">
+                                Compare{" "}
+                                {
+                                  candidates.length
+                                }{" "}
                                 TMDB{" "}
-                                {
-                                  review
-                                    .candidateTmdbId
-                                }
+                                {candidates.length ===
+                                1
+                                  ? "candidate"
+                                  : "candidates"}
 
-                                {
-                                  review
-                                    .candidateYear
-                                    ? ` · ${review.candidateYear}`
-                                    : ""
-                                }
-                              </p>
-                            </>
-                          ) : (
-                            <span className="text-zinc-600">
-                              No candidate
-                            </span>
+                                {refreshed
+                                  ? " · refreshed live"
+                                  : ""}
+                              </summary>
+
+                              <div className="border-t border-zinc-900 p-2">
+                                <div className="mb-2 grid gap-2 border-b border-zinc-900 pb-2 text-[10px] lg:grid-cols-[1.2fr_1fr_1fr]">
+                                  <div>
+                                    <p className="mb-1 text-[8px] font-bold uppercase tracking-[0.12em] text-zinc-600">
+                                      CinemaCity Source
+                                    </p>
+
+                                    <p className="font-semibold text-zinc-200">
+                                      {
+                                        review.sourceTitle
+                                      }
+                                    </p>
+
+                                    <p className="mt-0.5 text-zinc-500">
+                                      Year:{" "}
+                                      {
+                                        review.year ??
+                                        "—"
+                                      }{" "}
+                                      · Quality:{" "}
+                                      {
+                                        review.quality ??
+                                        "—"
+                                      }
+                                    </p>
+                                  </div>
+
+                                  <div>
+                                    <p className="mb-1 text-[8px] font-bold uppercase tracking-[0.12em] text-zinc-600">
+                                      Source Metadata
+                                    </p>
+
+                                    <p className="text-zinc-400">
+                                      Country:{" "}
+                                      {
+                                        review.sourceCountry ??
+                                        "—"
+                                      }
+                                    </p>
+
+                                    <p className="text-zinc-400">
+                                      Genres:{" "}
+                                      {
+                                        review.sourceGenres ??
+                                        "—"
+                                      }
+                                    </p>
+
+                                    <p className="text-zinc-400">
+                                      Audio:{" "}
+                                      {
+                                        review.sourceAudioLanguage ??
+                                        "—"
+                                      }
+                                    </p>
+                                  </div>
+
+                                  <div>
+                                    <p className="mb-1 text-[8px] font-bold uppercase tracking-[0.12em] text-zinc-600">
+                                      Source Plot
+                                    </p>
+
+                                    <p className="line-clamp-3 leading-4 text-zinc-500">
+                                      {
+                                        review.sourceDescription ??
+                                        "No source description available."
+                                      }
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="grid gap-2 xl:grid-cols-2">
+                                  {candidates.map(
+                                    (
+                                      candidate,
+                                      index,
+                                    ) => (
+                                      <CandidateChoice
+                                        key={
+                                          candidate.tmdbId
+                                        }
+                                        reviewId={
+                                          review.id
+                                        }
+                                        candidate={
+                                          candidate
+                                        }
+                                        rank={
+                                          index +
+                                          1
+                                        }
+                                      />
+                                    ),
+                                  )}
+                                </div>
+                              </div>
+                            </details>
                           )}
                         </div>
-
-                        <div className="font-semibold text-zinc-200">
-                          {
-                            formatConfidence(
-                              review.confidence,
-                            )
-                          }
-                        </div>
-
-                        <div className="text-[10px] leading-4 text-zinc-400">
-                          {
-                            formatDateTime(
-                              review
-                                .publishedAt,
-                            )
-                          }
-                        </div>
-
-                        <div
-                          className="truncate text-[10px] text-zinc-500"
-                          title={
-                            review.details ??
-                            undefined
-                          }
-                        >
-                          {
-                            review.details ??
-                            "—"
-                          }
-                        </div>
-
-                        <div className="flex items-center justify-end gap-1">
-                          {review
-                            .sourceUrl && (
-                            <a
-                              href={
-                                review
-                                  .sourceUrl
-                              }
-                              target="_blank"
-                              rel="noreferrer"
-                              className="border border-zinc-700 px-2 py-1 text-[9px] font-semibold text-zinc-400 transition hover:border-zinc-500 hover:text-white"
-                            >
-                              Source
-                            </a>
-                          )}
-
-                          {review
-                            .candidateTmdbId && (
-                            <form
-                              action={
-                                updateMatchReview
-                              }
-                            >
-                              <input
-                                type="hidden"
-                                name="id"
-                                value={
-                                  review.id
-                                }
-                              />
-
-                              <input
-                                type="hidden"
-                                name="action"
-                                value="APPROVE"
-                              />
-
-                              <button
-                                type="submit"
-                                className="border border-emerald-500/50 px-2 py-1 text-[9px] font-bold text-emerald-300 transition hover:border-emerald-400 hover:text-emerald-200"
-                              >
-                                Approve
-                              </button>
-                            </form>
-                          )}
-
-                          <form
-                            action={
-                              updateMatchReview
-                            }
-                          >
-                            <input
-                              type="hidden"
-                              name="id"
-                              value={
-                                review.id
-                              }
-                            />
-
-                            <input
-                              type="hidden"
-                              name="action"
-                              value="IGNORE"
-                            />
-
-                            <button
-                              type="submit"
-                              className="border border-zinc-800 px-2 py-1 text-[9px] font-semibold text-zinc-500 transition hover:border-zinc-600 hover:text-white"
-                            >
-                              Ignore
-                            </button>
-                          </form>
-                        </div>
-                      </div>
-                    ),
+                      );
+                    },
                   )}
+                </div>
               </div>
             </div>
           )}
@@ -1710,8 +2107,253 @@ export default async function AdminPage({
   );
 }
 
+function CandidateChoice({
+  reviewId,
+
+  candidate,
+
+  rank,
+}: {
+  reviewId:
+    number;
+
+  candidate:
+    MatchReviewCandidate;
+
+  rank:
+    number;
+}) {
+  const posterUrl =
+    getCandidatePosterUrl(
+      candidate,
+    );
+
+  return (
+    <div className="flex gap-3 border border-zinc-800 bg-black p-2">
+      <div className="h-[120px] w-[80px] shrink-0 overflow-hidden bg-zinc-950">
+        {posterUrl ? (
+          <img
+            src={
+              posterUrl
+            }
+            alt=""
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center px-1 text-center text-[8px] text-zinc-700">
+            No poster
+          </div>
+        )}
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[8px] font-bold uppercase tracking-[0.12em] text-zinc-600">
+              Candidate{" "}
+              {
+                rank
+              }
+            </p>
+
+            <p className="truncate text-xs font-bold text-white">
+              {
+                candidate.title
+              }
+            </p>
+
+            {candidate.originalTitle &&
+              candidate.originalTitle !==
+                candidate.title && (
+              <p className="truncate text-[9px] text-zinc-500">
+                Original:{" "}
+                {
+                  candidate.originalTitle
+                }
+              </p>
+            )}
+
+            <p className="mt-0.5 text-[9px] text-zinc-500">
+              TMDB{" "}
+              {
+                candidate.tmdbId
+              }
+
+              {" · "}
+
+              {
+                candidate.year ??
+                "Year unavailable"
+              }
+
+              {" · "}
+
+              Match{" "}
+              {
+                formatConfidence(
+                  candidate.confidence,
+                )
+              }
+            </p>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-1">
+            <a
+              href={`https://www.themoviedb.org/movie/${candidate.tmdbId}`}
+              target="_blank"
+              rel="noreferrer"
+              className="border border-zinc-700 px-2 py-1 text-[9px] font-semibold text-zinc-400 transition hover:border-zinc-500 hover:text-white"
+            >
+              TMDB
+            </a>
+
+            <form
+              action={
+                updateMatchReview
+              }
+            >
+              <input
+                type="hidden"
+                name="id"
+                value={
+                  reviewId
+                }
+              />
+
+              <input
+                type="hidden"
+                name="action"
+                value="APPROVE"
+              />
+
+              <input
+                type="hidden"
+                name="selectedTmdbId"
+                value={
+                  candidate.tmdbId
+                }
+              />
+
+              <button
+                type="submit"
+                className="border border-emerald-500/60 bg-emerald-500/5 px-2 py-1 text-[9px] font-bold text-emerald-300 transition hover:border-emerald-400 hover:bg-emerald-500/10"
+              >
+                Approve This
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <div className="mt-2 grid gap-x-4 gap-y-1 text-[9px] sm:grid-cols-2">
+          <p className="text-zinc-500">
+            Release:{" "}
+            <span className="text-zinc-300">
+              {
+                formatReleaseDate(
+                  candidate.releaseDate ??
+                  null,
+                )
+              }
+            </span>
+          </p>
+
+          <p className="text-zinc-500">
+            Country:{" "}
+            <span className="text-zinc-300">
+              {
+                formatCandidateCountries(
+                  candidate,
+                )
+              }
+            </span>
+          </p>
+
+          <p className="text-zinc-500">
+            Language:{" "}
+            <span className="text-zinc-300">
+              {
+                candidate.originalLanguage ??
+                "—"
+              }
+            </span>
+          </p>
+
+          <p className="text-zinc-500">
+            Runtime:{" "}
+            <span className="text-zinc-300">
+              {
+                candidate.runtime
+                  ? `${candidate.runtime} min`
+                  : "—"
+              }
+            </span>
+          </p>
+
+          <p className="col-span-full text-zinc-500">
+            Genres:{" "}
+            <span className="text-zinc-300">
+              {
+                formatCandidateGenres(
+                  candidate,
+                )
+              }
+            </span>
+          </p>
+
+          {candidate.imdbId && (
+            <p className="col-span-full text-zinc-500">
+              IMDb:{" "}
+              <span className="text-zinc-300">
+                {
+                  candidate.imdbId
+                }
+              </span>
+            </p>
+          )}
+        </div>
+
+        {candidate
+          .matchedSignals &&
+          candidate
+            .matchedSignals
+            .length >
+            0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {candidate
+              .matchedSignals
+              .map(
+                (
+                  signal,
+                ) => (
+                  <span
+                    key={
+                      signal
+                    }
+                    className="border border-zinc-800 px-1.5 py-0.5 text-[8px] text-zinc-500"
+                  >
+                    {
+                      signal
+                    }
+                  </span>
+                ),
+              )}
+          </div>
+        )}
+
+        <p className="mt-2 line-clamp-3 text-[9px] leading-4 text-zinc-500">
+          {
+            candidate.overview ??
+            "No TMDB plot description available."
+          }
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function CompactMetric({
   label,
+
   value,
 }: {
   label:

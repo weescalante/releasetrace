@@ -349,14 +349,14 @@ function getBackDestination(
 ) {
   if (
     from ===
-      "shadow-zone" ||
+      "leak-detections" ||
     referer.includes(
-      "/shadow-zone",
+      "/leak-detections",
     )
   ) {
     return {
       href:
-        "/shadow-zone",
+        "/leak-detections",
 
       label:
         "Back to Shadow Zone",
@@ -781,7 +781,7 @@ export default async function TvShowPage({
           Television metadata, ratings,
           season information and episode
           information provided by TMDB.
-          ShadowWindow does not currently
+          Watch Leaks does not currently
           publish TV unauthorized-availability
           detections until a dedicated TV
           detection source is connected.

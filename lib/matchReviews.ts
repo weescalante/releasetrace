@@ -16,18 +16,51 @@ export type MatchReviewDetectionType =
   | "CAM"
   | "WEB";
 
+export type MatchReviewCandidate = {
+  tmdbId: number;
+
+  title: string;
+
+  originalTitle?: string | null;
+
+  year?: string | null;
+
+  releaseDate?: string | null;
+
+  overview?: string | null;
+
+  posterPath?: string | null;
+
+  genres?: string[];
+
+  originalLanguage?: string | null;
+
+  originCountries?: string[];
+
+  runtime?: number | null;
+
+  imdbId?: string | null;
+
+  confidence?: number | null;
+
+  matchedSignals?: string[];
+};
+
 export type MatchReviewInput = {
   source: string;
+
   sourceUrl: string;
 
   sourceTitle: string;
+
   normalizedTitle: string;
 
   year: string | null;
 
   quality: string | null;
 
-  detectionType: MatchReviewDetectionType;
+  detectionType:
+    MatchReviewDetectionType;
 
   publishedAt: string | null;
 
@@ -36,13 +69,21 @@ export type MatchReviewInput = {
    * AI verification.
    */
   sourceDescription?: string | null;
+
   sourceCountry?: string | null;
+
   sourceGenres?: string | null;
+
   sourceAudioLanguage?: string | null;
+
   sourceSubtitleLanguage?: string | null;
 
   reason: MatchReviewReason;
 
+  /*
+   * Existing single best/default
+   * candidate.
+   */
   candidateTmdbId?: number | null;
 
   candidateTitle?: string | null;
@@ -51,6 +92,13 @@ export type MatchReviewInput = {
 
   confidence?: number | null;
 
+  /*
+   * Full candidate set considered for
+   * an ambiguous review.
+   */
+  candidateOptions?:
+    MatchReviewCandidate[];
+
   details?: string | null;
 };
 
@@ -58,23 +106,30 @@ export type AdminMatchReview = {
   id: number;
 
   source: string;
+
   sourceUrl: string;
 
   sourceTitle: string;
+
   normalizedTitle: string;
 
   year: string | null;
 
   quality: string | null;
 
-  detectionType: MatchReviewDetectionType;
+  detectionType:
+    MatchReviewDetectionType;
 
   publishedAt: string | null;
 
   sourceDescription: string | null;
+
   sourceCountry: string | null;
+
   sourceGenres: string | null;
+
   sourceAudioLanguage: string | null;
+
   sourceSubtitleLanguage: string | null;
 
   reason: MatchReviewReason;
@@ -87,11 +142,24 @@ export type AdminMatchReview = {
 
   confidence: number | null;
 
+  candidateOptions:
+    MatchReviewCandidate[];
+
+  approvedCandidateTmdbId:
+    number | null;
+
+  approvedCandidateTitle:
+    string | null;
+
+  approvedCandidateYear:
+    string | null;
+
   details: string | null;
 
   status: MatchReviewStatus;
 
   firstSeenAt: string;
+
   lastSeenAt: string;
 
   reviewedAt: string | null;
@@ -103,6 +171,7 @@ export type AdminMatchReviewPage = {
   total: number;
 
   limit: number;
+
   offset: number;
 
   hasMore: boolean;
@@ -112,8 +181,11 @@ export type AdminMatchReviewPage = {
 
 export type MatchReviewStatusCounts = {
   pending: number;
+
   approved: number;
+
   ignored: number;
+
   resolved: number;
 };
 
@@ -134,16 +206,27 @@ export type MatchReviewIdentity = {
 
   year: string | null;
 
-  detectionType: MatchReviewDetectionType;
+  detectionType:
+    MatchReviewDetectionType;
+};
+
+export type ApprovedMatchReviewCandidate = {
+  tmdbId: number;
+
+  title: string | null;
+
+  year: string | null;
 };
 
 type MatchReviewRow = {
   id: number;
 
   source: string;
+
   source_url: string;
 
   source_title: string;
+
   normalized_title: string;
 
   year: string | null;
@@ -154,39 +237,75 @@ type MatchReviewRow = {
 
   published_at: string | null;
 
-  source_description: string | null;
+  source_description:
+    string | null;
 
-  source_country: string | null;
+  source_country:
+    string | null;
 
-  source_genres: string | null;
+  source_genres:
+    string | null;
 
-  source_audio_language: string | null;
+  source_audio_language:
+    string | null;
 
-  source_subtitle_language: string | null;
+  source_subtitle_language:
+    string | null;
 
   reason: string;
 
-  candidate_tmdb_id: number | null;
+  candidate_tmdb_id:
+    number | null;
 
-  candidate_title: string | null;
+  candidate_title:
+    string | null;
 
-  candidate_year: string | null;
+  candidate_year:
+    string | null;
 
-  confidence: number | null;
+  confidence:
+    number | null;
 
-  details: string | null;
+  candidate_options_json:
+    string | null;
+
+  approved_candidate_tmdb_id:
+    number | null;
+
+  approved_candidate_title:
+    string | null;
+
+  approved_candidate_year:
+    string | null;
+
+  details:
+    string | null;
 
   status: string;
 
   first_seen_at: string;
+
   last_seen_at: string;
 
-  reviewed_at: string | null;
+  reviewed_at:
+    string | null;
 };
 
 let tableReady:
   Promise<void> | null =
   null;
+
+const ACTIVE_REVIEW_YEAR_CLAUSE = `
+  (
+    year IS NULL
+    OR trim(year) = ''
+    OR CAST(year AS INTEGER) =
+       CAST(
+         strftime('%Y', 'now')
+         AS INTEGER
+       )
+  )
+`;
 
 function normalizeDate(
   value: string | null,
@@ -214,46 +333,262 @@ function buildReviewKey(
 ) {
   return [
     review.source,
+
     review.sourceUrl,
+
     review.normalizedTitle,
+
     review.year ?? "",
+
     review.detectionType,
+
     review.quality ?? "",
+
     review.reason,
-    review.candidateTmdbId ?? "",
+
+    review.candidateTmdbId ??
+      "",
   ].join("||");
 }
 
-/*
- * The normal PENDING queue is an
- * operational queue rather than a
- * historical archive.
- *
- * In 2026:
- *
- * 2026 -> visible
- * 2024 -> hidden
- * 2001 -> hidden
- *
- * Unknown years remain visible because
- * they may genuinely require human review.
- */
-const ACTIVE_REVIEW_YEAR_CLAUSE = `
-  (
-    year IS NULL
+function stringOrNull(
+  value: unknown,
+): string | null {
+  if (
+    typeof value !==
+    "string"
+  ) {
+    return null;
+  }
 
-    OR trim(year) = ''
+  const trimmed =
+    value.trim();
 
-    OR CAST(year AS INTEGER) =
-       CAST(
-         strftime('%Y', 'now')
-         AS INTEGER
-       )
-  )
-`;
+  return trimmed.length > 0
+    ? trimmed
+    : null;
+}
+
+function stringArray(
+  value: unknown,
+): string[] {
+  if (
+    !Array.isArray(
+      value,
+    )
+  ) {
+    return [];
+  }
+
+  return value
+    .filter(
+      (
+        item,
+      ): item is string =>
+        typeof item ===
+        "string",
+    )
+    .map(
+      (item) =>
+        item.trim(),
+    )
+    .filter(Boolean);
+}
+
+function normalizeCandidateOptions(
+  candidates:
+    MatchReviewCandidate[],
+): MatchReviewCandidate[] {
+  const normalized:
+    MatchReviewCandidate[] =
+    [];
+
+  const seen =
+    new Set<number>();
+
+  for (
+    const rawCandidate of
+    candidates
+  ) {
+    const tmdbId =
+      Number(
+        rawCandidate
+          ?.tmdbId,
+      );
+
+    const title =
+      stringOrNull(
+        rawCandidate
+          ?.title,
+      );
+
+    if (
+      !Number.isInteger(
+        tmdbId,
+      ) ||
+      tmdbId < 1 ||
+      !title ||
+      seen.has(
+        tmdbId,
+      )
+    ) {
+      continue;
+    }
+
+    seen.add(
+      tmdbId,
+    );
+
+    const runtimeValue =
+      rawCandidate.runtime;
+
+    const runtime =
+      typeof runtimeValue ===
+        "number" &&
+      Number.isFinite(
+        runtimeValue,
+      )
+        ? runtimeValue
+        : null;
+
+    const confidenceValue =
+      rawCandidate.confidence;
+
+    const confidence =
+      typeof confidenceValue ===
+        "number" &&
+      Number.isFinite(
+        confidenceValue,
+      )
+        ? confidenceValue
+        : null;
+
+    normalized.push({
+      tmdbId,
+
+      title,
+
+      originalTitle:
+        stringOrNull(
+          rawCandidate
+            .originalTitle,
+        ),
+
+      year:
+        stringOrNull(
+          rawCandidate.year,
+        ),
+
+      releaseDate:
+        stringOrNull(
+          rawCandidate
+            .releaseDate,
+        ),
+
+      overview:
+        stringOrNull(
+          rawCandidate
+            .overview,
+        ),
+
+      posterPath:
+        stringOrNull(
+          rawCandidate
+            .posterPath,
+        ),
+
+      genres:
+        stringArray(
+          rawCandidate
+            .genres,
+        ),
+
+      originalLanguage:
+        stringOrNull(
+          rawCandidate
+            .originalLanguage,
+        ),
+
+      originCountries:
+        stringArray(
+          rawCandidate
+            .originCountries,
+        ),
+
+      runtime,
+
+      imdbId:
+        stringOrNull(
+          rawCandidate
+            .imdbId,
+        ),
+
+      confidence,
+
+      matchedSignals:
+        stringArray(
+          rawCandidate
+            .matchedSignals,
+        ),
+    });
+  }
+
+  return normalized;
+}
+
+function serializeCandidateOptions(
+  candidates:
+    | MatchReviewCandidate[]
+    | undefined,
+): string | null {
+  if (
+    candidates ===
+    undefined
+  ) {
+    return null;
+  }
+
+  return JSON.stringify(
+    normalizeCandidateOptions(
+      candidates,
+    ),
+  );
+}
+
+function parseCandidateOptions(
+  value: string | null,
+): MatchReviewCandidate[] {
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed:
+      unknown =
+      JSON.parse(
+        value,
+      );
+
+    if (
+      !Array.isArray(
+        parsed,
+      )
+    ) {
+      return [];
+    }
+
+    return normalizeCandidateOptions(
+      parsed as
+        MatchReviewCandidate[],
+    );
+  } catch {
+    return [];
+  }
+}
 
 async function addColumnIfMissing(
-  existingColumns: Set<string>,
+  existingColumns:
+    Set<string>,
 
   columnName: string,
 
@@ -277,13 +612,15 @@ async function addColumnIfMissing(
     );
   } catch (error) {
     /*
-     * Protect against two server instances
-     * attempting the same migration at
-     * roughly the same time.
+     * Protect against two server
+     * instances attempting the same
+     * migration.
      */
     const message =
-      error instanceof Error
-        ? error.message.toLowerCase()
+      error instanceof
+      Error
+        ? error.message
+            .toLowerCase()
         : "";
 
     if (
@@ -300,10 +637,6 @@ async function ensureMatchReviewTable() {
   if (!tableReady) {
     tableReady = (
       async () => {
-        /*
-         * Fresh databases get the complete
-         * current schema immediately.
-         */
         await turso.execute(`
           CREATE TABLE IF NOT EXISTS match_reviews (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -311,9 +644,11 @@ async function ensureMatchReviewTable() {
             review_key TEXT NOT NULL UNIQUE,
 
             source TEXT NOT NULL,
+
             source_url TEXT NOT NULL,
 
             source_title TEXT NOT NULL,
+
             normalized_title TEXT NOT NULL,
 
             year TEXT,
@@ -344,6 +679,14 @@ async function ensureMatchReviewTable() {
 
             confidence REAL,
 
+            candidate_options_json TEXT,
+
+            approved_candidate_tmdb_id INTEGER,
+
+            approved_candidate_title TEXT,
+
+            approved_candidate_year TEXT,
+
             details TEXT,
 
             status TEXT NOT NULL DEFAULT 'PENDING',
@@ -356,14 +699,6 @@ async function ensureMatchReviewTable() {
           )
         `);
 
-        /*
-         * CREATE TABLE IF NOT EXISTS does
-         * not add columns to an already
-         * existing SQLite table.
-         *
-         * Inspect the live schema and add
-         * only fields that are missing.
-         */
         const tableInfo =
           await turso.execute(`
             PRAGMA table_info(
@@ -376,7 +711,8 @@ async function ensureMatchReviewTable() {
             tableInfo.rows.map(
               (row) =>
                 String(
-                  row.name ?? "",
+                  row.name ??
+                    "",
                 ),
             ),
           );
@@ -436,6 +772,50 @@ async function ensureMatchReviewTable() {
           `,
         );
 
+        await addColumnIfMissing(
+          existingColumns,
+
+          "candidate_options_json",
+
+          `
+            ALTER TABLE match_reviews
+            ADD COLUMN candidate_options_json TEXT
+          `,
+        );
+
+        await addColumnIfMissing(
+          existingColumns,
+
+          "approved_candidate_tmdb_id",
+
+          `
+            ALTER TABLE match_reviews
+            ADD COLUMN approved_candidate_tmdb_id INTEGER
+          `,
+        );
+
+        await addColumnIfMissing(
+          existingColumns,
+
+          "approved_candidate_title",
+
+          `
+            ALTER TABLE match_reviews
+            ADD COLUMN approved_candidate_title TEXT
+          `,
+        );
+
+        await addColumnIfMissing(
+          existingColumns,
+
+          "approved_candidate_year",
+
+          `
+            ALTER TABLE match_reviews
+            ADD COLUMN approved_candidate_year TEXT
+          `,
+        );
+
         await turso.execute(`
           CREATE INDEX IF NOT EXISTS
             idx_match_reviews_status
@@ -492,6 +872,64 @@ async function ensureMatchReviewTable() {
 function mapMatchReviewRow(
   row: MatchReviewRow,
 ): AdminMatchReview {
+  const storedOptions =
+    parseCandidateOptions(
+      row
+        .candidate_options_json,
+    );
+
+  /*
+   * Existing review rows created before
+   * candidate_options_json existed still
+   * expose their old single candidate.
+   *
+   * That keeps the migration backward
+   * compatible.
+   */
+  const fallbackOptions:
+    MatchReviewCandidate[] =
+    storedOptions.length ===
+      0 &&
+    row.candidate_tmdb_id !==
+      null
+      ? [
+          {
+            tmdbId:
+              Number(
+                row
+                  .candidate_tmdb_id,
+              ),
+
+            title:
+              row.candidate_title ===
+              null
+                ? `TMDB ${row.candidate_tmdb_id}`
+                : String(
+                    row
+                      .candidate_title,
+                  ),
+
+            year:
+              row.candidate_year ===
+              null
+                ? null
+                : String(
+                    row
+                      .candidate_year,
+                  ),
+
+            confidence:
+              row.confidence ===
+              null
+                ? null
+                : Number(
+                    row
+                      .confidence,
+                  ),
+          },
+        ]
+      : storedOptions;
+
   return {
     id:
       Number(
@@ -515,7 +953,8 @@ function mapMatchReviewRow(
 
     normalizedTitle:
       String(
-        row.normalized_title,
+        row
+          .normalized_title,
       ),
 
     year:
@@ -537,45 +976,57 @@ function mapMatchReviewRow(
         MatchReviewDetectionType,
 
     publishedAt:
-      row.published_at === null
+      row.published_at ===
+      null
         ? null
         : String(
-            row.published_at,
+            row
+              .published_at,
           ),
 
     sourceDescription:
-      row.source_description === null
+      row.source_description ===
+      null
         ? null
         : String(
-            row.source_description,
+            row
+              .source_description,
           ),
 
     sourceCountry:
-      row.source_country === null
+      row.source_country ===
+      null
         ? null
         : String(
-            row.source_country,
+            row
+              .source_country,
           ),
 
     sourceGenres:
-      row.source_genres === null
+      row.source_genres ===
+      null
         ? null
         : String(
-            row.source_genres,
+            row
+              .source_genres,
           ),
 
     sourceAudioLanguage:
-      row.source_audio_language === null
+      row.source_audio_language ===
+      null
         ? null
         : String(
-            row.source_audio_language,
+            row
+              .source_audio_language,
           ),
 
     sourceSubtitleLanguage:
-      row.source_subtitle_language === null
+      row.source_subtitle_language ===
+      null
         ? null
         : String(
-            row.source_subtitle_language,
+            row
+              .source_subtitle_language,
           ),
 
     reason:
@@ -583,31 +1034,69 @@ function mapMatchReviewRow(
         MatchReviewReason,
 
     candidateTmdbId:
-      row.candidate_tmdb_id === null
+      row.candidate_tmdb_id ===
+      null
         ? null
         : Number(
-            row.candidate_tmdb_id,
+            row
+              .candidate_tmdb_id,
           ),
 
     candidateTitle:
-      row.candidate_title === null
+      row.candidate_title ===
+      null
         ? null
         : String(
-            row.candidate_title,
+            row
+              .candidate_title,
           ),
 
     candidateYear:
-      row.candidate_year === null
+      row.candidate_year ===
+      null
         ? null
         : String(
-            row.candidate_year,
+            row
+              .candidate_year,
           ),
 
     confidence:
-      row.confidence === null
+      row.confidence ===
+      null
         ? null
         : Number(
-            row.confidence,
+            row
+              .confidence,
+          ),
+
+    candidateOptions:
+      fallbackOptions,
+
+    approvedCandidateTmdbId:
+      row.approved_candidate_tmdb_id ===
+      null
+        ? null
+        : Number(
+            row
+              .approved_candidate_tmdb_id,
+          ),
+
+    approvedCandidateTitle:
+      row.approved_candidate_title ===
+      null
+        ? null
+        : String(
+            row
+              .approved_candidate_title,
+          ),
+
+    approvedCandidateYear:
+      row.approved_candidate_year ===
+      null
+        ? null
+        : String(
+            row
+              .approved_candidate_year,
           ),
 
     details:
@@ -632,13 +1121,73 @@ function mapMatchReviewRow(
       ),
 
     reviewedAt:
-      row.reviewed_at === null
+      row.reviewed_at ===
+      null
         ? null
         : String(
-            row.reviewed_at,
+            row
+              .reviewed_at,
           ),
   };
 }
+
+const MATCH_REVIEW_SELECT_COLUMNS = `
+  id,
+
+  source,
+
+  source_url,
+
+  source_title,
+
+  normalized_title,
+
+  year,
+
+  quality,
+
+  detection_type,
+
+  published_at,
+
+  source_description,
+
+  source_country,
+
+  source_genres,
+
+  source_audio_language,
+
+  source_subtitle_language,
+
+  reason,
+
+  candidate_tmdb_id,
+
+  candidate_title,
+
+  candidate_year,
+
+  confidence,
+
+  candidate_options_json,
+
+  approved_candidate_tmdb_id,
+
+  approved_candidate_title,
+
+  approved_candidate_year,
+
+  details,
+
+  status,
+
+  first_seen_at,
+
+  last_seen_at,
+
+  reviewed_at
+`;
 
 export async function saveMatchReview(
   review: MatchReviewInput,
@@ -659,6 +1208,11 @@ export async function saveMatchReview(
       review,
     );
 
+  const candidateOptionsJson =
+    serializeCandidateOptions(
+      review.candidateOptions,
+    );
+
   const result =
     await turso.execute({
       sql: `
@@ -666,9 +1220,11 @@ export async function saveMatchReview(
           review_key,
 
           source,
+
           source_url,
 
           source_title,
+
           normalized_title,
 
           year,
@@ -699,11 +1255,14 @@ export async function saveMatchReview(
 
           confidence,
 
+          candidate_options_json,
+
           details,
 
           status,
 
           first_seen_at,
+
           last_seen_at
         )
 
@@ -744,16 +1303,18 @@ export async function saveMatchReview(
 
           ?,
 
+          ?,
+
           'PENDING',
 
           ?,
+
           ?
         )
 
         ON CONFLICT(review_key)
 
         DO UPDATE SET
-
           source_title =
             excluded.source_title,
 
@@ -772,11 +1333,6 @@ export async function saveMatchReview(
           published_at =
             excluded.published_at,
 
-          /*
-           * Preserve existing rich source
-           * evidence if a later ingestion
-           * happens to omit a field.
-           */
           source_description =
             COALESCE(
               excluded.source_description,
@@ -819,6 +1375,12 @@ export async function saveMatchReview(
           confidence =
             excluded.confidence,
 
+          candidate_options_json =
+            COALESCE(
+              excluded.candidate_options_json,
+              match_reviews.candidate_options_json
+            ),
+
           details =
             excluded.details,
 
@@ -854,9 +1416,11 @@ export async function saveMatchReview(
         reviewKey,
 
         review.source,
+
         review.sourceUrl,
 
         review.sourceTitle,
+
         review.normalizedTitle,
 
         review.year,
@@ -896,10 +1460,13 @@ export async function saveMatchReview(
         review.confidence ??
           null,
 
+        candidateOptionsJson,
+
         review.details ??
           null,
 
         now,
+
         now,
       ],
     });
@@ -930,50 +1497,7 @@ export async function getMatchReviewById(
     await turso.execute({
       sql: `
         SELECT
-          id,
-
-          source,
-          source_url,
-
-          source_title,
-          normalized_title,
-
-          year,
-
-          quality,
-
-          detection_type,
-
-          published_at,
-
-          source_description,
-
-          source_country,
-
-          source_genres,
-
-          source_audio_language,
-
-          source_subtitle_language,
-
-          reason,
-
-          candidate_tmdb_id,
-
-          candidate_title,
-
-          candidate_year,
-
-          confidence,
-
-          details,
-
-          status,
-
-          first_seen_at,
-          last_seen_at,
-
-          reviewed_at
+          ${MATCH_REVIEW_SELECT_COLUMNS}
 
         FROM match_reviews
 
@@ -989,12 +1513,10 @@ export async function getMatchReviewById(
 
   const row =
     result.rows[0] as unknown as
-      MatchReviewRow |
-      undefined;
+      | MatchReviewRow
+      | undefined;
 
-  if (
-    !row
-  ) {
+  if (!row) {
     return null;
   }
 
@@ -1032,8 +1554,10 @@ export async function getAdminMatchReviewsPage({
         Math.floor(
           limit,
         ),
+
         1,
       ),
+
       100,
     );
 
@@ -1042,6 +1566,7 @@ export async function getAdminMatchReviewsPage({
       Math.floor(
         offset,
       ),
+
       0,
     );
 
@@ -1073,9 +1598,7 @@ export async function getAdminMatchReviewsPage({
     );
   }
 
-  if (
-    reason
-  ) {
+  if (reason) {
     whereParts.push(
       "reason = ?",
     );
@@ -1093,88 +1616,48 @@ export async function getAdminMatchReviewsPage({
   const [
     reviewsResult,
     countResult,
-  ] = await Promise.all([
-    turso.execute({
-      sql: `
-        SELECT
-          id,
+  ] =
+    await Promise.all([
+      turso.execute({
+        sql: `
+          SELECT
+            ${MATCH_REVIEW_SELECT_COLUMNS}
 
-          source,
-          source_url,
+          FROM match_reviews
 
-          source_title,
-          normalized_title,
+          WHERE ${whereClause}
 
-          year,
+          ORDER BY
+            datetime(last_seen_at) DESC,
+            id DESC
 
-          quality,
+          LIMIT ?
 
-          detection_type,
+          OFFSET ?
+        `,
 
-          published_at,
+        args: [
+          ...args,
 
-          source_description,
+          safeLimit,
 
-          source_country,
+          safeOffset,
+        ],
+      }),
 
-          source_genres,
+      turso.execute({
+        sql: `
+          SELECT
+            COUNT(*) AS total
 
-          source_audio_language,
+          FROM match_reviews
 
-          source_subtitle_language,
+          WHERE ${whereClause}
+        `,
 
-          reason,
-
-          candidate_tmdb_id,
-
-          candidate_title,
-
-          candidate_year,
-
-          confidence,
-
-          details,
-
-          status,
-
-          first_seen_at,
-          last_seen_at,
-
-          reviewed_at
-
-        FROM match_reviews
-
-        WHERE ${whereClause}
-
-        ORDER BY
-          datetime(last_seen_at) DESC,
-          id DESC
-
-        LIMIT ?
-        OFFSET ?
-      `,
-
-      args: [
-        ...args,
-
-        safeLimit,
-        safeOffset,
-      ],
-    }),
-
-    turso.execute({
-      sql: `
-        SELECT
-          COUNT(*) AS total
-
-        FROM match_reviews
-
-        WHERE ${whereClause}
-      `,
-
-      args,
-    }),
-  ]);
+        args,
+      }),
+    ]);
 
   const rows =
     reviewsResult
@@ -1231,6 +1714,7 @@ export async function getMatchReviewStatusCounts(): Promise<
     await turso.execute(`
       SELECT
         status,
+
         COUNT(*) AS total
 
       FROM match_reviews
@@ -1255,7 +1739,7 @@ export async function getMatchReviewStatusCounts(): Promise<
 
   for (
     const row of
-      result.rows
+    result.rows
   ) {
     const status =
       String(
@@ -1343,6 +1827,7 @@ export async function setMatchReviewStatus(
 
         SET
           status = ?,
+
           reviewed_at = ?
 
         WHERE id = ?
@@ -1363,46 +1848,89 @@ export async function setMatchReviewStatus(
   );
 }
 
+export async function recordApprovedMatchReviewCandidate({
+  id,
+
+  candidate,
+}: {
+  id: number;
+
+  candidate:
+    ApprovedMatchReviewCandidate;
+}): Promise<boolean> {
+  await ensureMatchReviewTable();
+
+  if (
+    !Number.isInteger(
+      id,
+    ) ||
+    id < 1
+  ) {
+    return false;
+  }
+
+  if (
+    !Number.isInteger(
+      candidate.tmdbId,
+    ) ||
+    candidate.tmdbId < 1
+  ) {
+    return false;
+  }
+
+  const now =
+    new Date()
+      .toISOString();
+
+  const result =
+    await turso.execute({
+      sql: `
+        UPDATE match_reviews
+
+        SET
+          approved_candidate_tmdb_id = ?,
+
+          approved_candidate_title = ?,
+
+          approved_candidate_year = ?,
+
+          status = 'APPROVED',
+
+          reviewed_at = ?
+
+        WHERE id = ?
+      `,
+
+      args: [
+        candidate.tmdbId,
+
+        candidate.title,
+
+        candidate.year,
+
+        now,
+
+        id,
+      ],
+    });
+
+  return (
+    result.rowsAffected >
+    0
+  );
+}
+
 /*
  * Once a detection has successfully passed
  * deterministic/AI verification AND has
  * actually been saved, related stale review
  * rows can be cleared.
  *
- * IMPORTANT:
- *
  * source_url is the strongest identifier
  * for a specific CinemaCity feed item.
  *
- * We intentionally DO NOT require an exact
- * normalized_title match here.
- *
- * Example:
- *
- * Earlier review:
- *
- * The Widower: &#039;Til Death Do Us Part
- *
- * Current normalized detection:
- *
- * The Widower: 'Til Death Do Us Part
- *
- * They are the same CinemaCity item because
- * they have the same source URL.
- *
- * Requiring title equality would incorrectly
- * leave the old review PENDING.
- *
- * We still require:
- *
- * - same source
- * - same source URL
- * - same reported year
- * - same detection type
- *
- * Therefore a different source item or a CAM
- * vs WEB detection cannot accidentally clear
- * the review.
+ * We intentionally do not require exact
+ * title equality here.
  */
 export async function approveRelatedMatchReviews(
   identity:
@@ -1421,6 +1949,7 @@ export async function approveRelatedMatchReviews(
 
         SET
           status = 'APPROVED',
+
           reviewed_at = ?
 
         WHERE source = ?
@@ -1462,6 +1991,7 @@ export async function markMatchReviewApproved(
 ): Promise<boolean> {
   return setMatchReviewStatus(
     id,
+
     "APPROVED",
   );
 }
@@ -1471,6 +2001,7 @@ export async function markMatchReviewIgnored(
 ): Promise<boolean> {
   return setMatchReviewStatus(
     id,
+
     "IGNORED",
   );
 }

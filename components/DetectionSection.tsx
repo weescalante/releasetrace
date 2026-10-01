@@ -140,7 +140,7 @@ function getTitleHref(
     return null;
   }
 
-  return `/movies/${detection.tmdbId}?from=shadow-zone`;
+  return `/movies/${detection.tmdbId}?from=leak-detections`;
 }
 
 function getLatencyInfo(

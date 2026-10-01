@@ -5,8 +5,8 @@ import { usePathname } from "next/navigation";
 
 const navigation = [
   {
-    label: "Shadow Zone",
-    href: "/shadow-zone",
+    label: "Leak Detections",
+    href: "/leak-detections",
   },
   {
     label: "Movies",
@@ -26,8 +26,8 @@ export default function SiteHeader() {
   const pathname = usePathname();
 
   function isActive(href: string) {
-    if (href === "/shadow-zone") {
-      return pathname === "/shadow-zone";
+    if (href === "/leak-detections") {
+      return pathname === "/leak-detections";
     }
 
     return pathname.startsWith(href);
@@ -37,10 +37,10 @@ export default function SiteHeader() {
     <header className="border-b border-zinc-900">
       <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-6 py-5">
         <Link
-          href="/shadow-zone"
+          href="/leak-detections"
           className="text-xl font-bold tracking-tight text-white"
         >
-          ShadowWindow
+          Watch Leaks
         </Link>
 
         <nav className="hidden items-center gap-8 text-sm md:flex">

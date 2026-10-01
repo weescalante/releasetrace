@@ -139,7 +139,7 @@ export default async function AdminLoginPage({
           </p>
 
           <h1 className="mt-3 text-4xl font-bold tracking-tight">
-            ShadowWindow Admin
+            Watch Leaks Admin
           </h1>
 
           <p className="mt-3 text-sm leading-6 text-zinc-400">
@@ -187,7 +187,7 @@ export default async function AdminLoginPage({
             Internal access only.
             Monitoring-source information
             is not exposed on the public
-            ShadowWindow pages.
+            Watch Leaks pages.
           </p>
         </div>
       </section>

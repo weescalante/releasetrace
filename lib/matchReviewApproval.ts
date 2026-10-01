@@ -3,8 +3,14 @@ import {
 } from "./cloudDatabase";
 
 import {
+  getLiveMatchReviewCandidates,
+} from "./matchReviewCandidates";
+
+import {
   approveRelatedMatchReviews,
   getMatchReviewById,
+  recordApprovedMatchReviewCandidate,
+  type MatchReviewCandidate,
 } from "./matchReviews";
 
 type ReleaseRegion =
@@ -15,6 +21,7 @@ type TmdbMovieDetails = {
   id: number;
 
   title: string;
+
   original_title?: string;
 
   release_date?: string;
@@ -241,36 +248,154 @@ function getYearFromDate(
   );
 }
 
+function mergeCandidates(
+  stored:
+    MatchReviewCandidate[],
+
+  live:
+    MatchReviewCandidate[],
+) {
+  const candidates =
+    new Map<
+      number,
+      MatchReviewCandidate
+    >();
+
+  /*
+   * Stored candidates go in first.
+   *
+   * Live TMDB candidates then replace
+   * matching IDs so Admin approval uses
+   * the newest/richer metadata.
+   */
+  for (
+    const candidate of
+    stored
+  ) {
+    candidates.set(
+      candidate.tmdbId,
+      candidate,
+    );
+  }
+
+  for (
+    const candidate of
+    live
+  ) {
+    candidates.set(
+      candidate.tmdbId,
+      candidate,
+    );
+  }
+
+  return Array.from(
+    candidates.values(),
+  );
+}
+
+/*
+ * Build the candidate set that Admin
+ * is actually allowed to approve.
+ *
+ * New reviews already preserve detailed
+ * candidateOptions.
+ *
+ * Older reviews may contain only one
+ * legacy candidate even though the
+ * original match was AMBIGUOUS.
+ *
+ * For that reason we refresh TMDB here
+ * as well as on the Admin page.
+ *
+ * This has two benefits:
+ *
+ * 1. Admin can approve newly discovered
+ *    candidate choices safely.
+ *
+ * 2. A forged arbitrary TMDB ID still
+ *    cannot be approved just because it
+ *    was posted to the server.
+ */
+async function getApprovalCandidates({
+  normalizedTitle,
+
+  year,
+
+  sourceDescription,
+
+  candidateTmdbId,
+
+  storedCandidates,
+}: {
+  normalizedTitle:
+    string;
+
+  year:
+    string | null;
+
+  sourceDescription:
+    string | null;
+
+  candidateTmdbId:
+    number | null;
+
+  storedCandidates:
+    MatchReviewCandidate[];
+}) {
+  let liveCandidates:
+    MatchReviewCandidate[] =
+    [];
+
+  try {
+    liveCandidates =
+      await getLiveMatchReviewCandidates({
+        normalizedTitle,
+
+        year,
+
+        sourceDescription,
+
+        candidateTmdbId,
+      });
+  } catch (error) {
+    /*
+     * TMDB refresh failure should not
+     * destroy backward compatibility for
+     * old review rows.
+     *
+     * We can still use stored candidates,
+     * but we log the refresh failure.
+     */
+    console.error(
+      "Unable to refresh TMDB candidates during match approval.",
+
+      error,
+    );
+  }
+
+  return mergeCandidates(
+    storedCandidates,
+
+    liveCandidates,
+  );
+}
+
 /*
  * Approve one stored Match Review.
  *
- * This workflow does NOT depend on
- * the CinemaCity item still being
- * present in the live RSS feed.
+ * selectedTmdbId is the exact candidate
+ * chosen by the administrator.
  *
- * The review row already preserves:
- * - source
- * - source URL
- * - source title
- * - normalized title
- * - source year
- * - quality
- * - detection type
- * - source publication time
- * - chosen TMDB candidate
- *
- * Approval therefore means:
- *
- * 1. Read the stored review.
- * 2. Trust the human-confirmed
- *    candidate TMDB ID.
- * 3. Refresh current TMDB metadata.
- * 4. Create/update the detection.
- * 5. Mark related stale review rows
- *    APPROVED.
+ * The CinemaCity RSS entry does NOT need
+ * to remain in the live feed because all
+ * source information required to create
+ * the detection lives in the review row.
  */
 export async function approveMatchReview(
   reviewId: number,
+
+  selectedTmdbId?:
+    number,
 ): Promise<
   MatchReviewApprovalResult
 > {
@@ -286,6 +411,34 @@ export async function approveMatchReview(
 
       message:
         "Invalid match review ID.",
+
+      reviewId,
+
+      tmdbId:
+        null,
+
+      relatedReviewsApproved:
+        0,
+    };
+  }
+
+  if (
+    selectedTmdbId !==
+      undefined &&
+    (
+      !Number.isInteger(
+        selectedTmdbId,
+      ) ||
+      selectedTmdbId <
+        1
+    )
+  ) {
+    return {
+      success:
+        false,
+
+      message:
+        "Invalid selected TMDB ID.",
 
       reviewId,
 
@@ -334,6 +487,7 @@ export async function approveMatchReview(
       reviewId,
 
       tmdbId:
+        selectedTmdbId ??
         review.candidateTmdbId,
 
       relatedReviewsApproved:
@@ -355,16 +509,169 @@ export async function approveMatchReview(
       reviewId,
 
       tmdbId:
-        review.candidateTmdbId,
+        review
+          .approvedCandidateTmdbId ??
+        review
+          .candidateTmdbId,
 
       relatedReviewsApproved:
         0,
     };
   }
 
+  /*
+   * Refresh candidates from TMDB.
+   *
+   * This is especially important for
+   * legacy AMBIGUOUS rows such as the
+   * current Runner and The Nice Ones
+   * reviews, which originally preserved
+   * only one candidate.
+   */
+  const candidateOptions =
+    await getApprovalCandidates({
+      normalizedTitle:
+        review.normalizedTitle,
+
+      year:
+        review.year,
+
+      sourceDescription:
+        review.sourceDescription ??
+        null,
+
+      candidateTmdbId:
+        review.candidateTmdbId,
+
+      storedCandidates:
+        review.candidateOptions ??
+        [],
+    });
+
+  let tmdbId:
+    number | null =
+    null;
+
+  let selectedCandidateYear:
+    string | null =
+    null;
+
+  let selectedCandidateTitle:
+    string | null =
+    null;
+
   if (
-    !review.candidateTmdbId
+    selectedTmdbId !==
+    undefined
   ) {
+    const selectedOption =
+      candidateOptions.find(
+        (candidate) =>
+          candidate.tmdbId ===
+          selectedTmdbId,
+      );
+
+    /*
+     * Do not accept arbitrary TMDB IDs.
+     *
+     * The selected movie must exist in
+     * either the stored review candidates
+     * or the refreshed live TMDB candidate
+     * set.
+     */
+    if (!selectedOption) {
+      return {
+        success:
+          false,
+
+        message:
+          "The selected TMDB movie is not one of the valid candidates for this review.",
+
+        reviewId,
+
+        tmdbId:
+          selectedTmdbId,
+
+        relatedReviewsApproved:
+          0,
+      };
+    }
+
+    tmdbId =
+      selectedOption.tmdbId;
+
+    selectedCandidateYear =
+      selectedOption.year ??
+      null;
+
+    selectedCandidateTitle =
+      selectedOption.title ??
+      null;
+  } else if (
+    candidateOptions.length >
+    1
+  ) {
+    /*
+     * Multiple choices means the human
+     * administrator must decide.
+     *
+     * Never silently approve candidate #1.
+     */
+    return {
+      success:
+        false,
+
+      message:
+        "This review has multiple TMDB candidates. Choose the correct candidate before approving.",
+
+      reviewId,
+
+      tmdbId:
+        null,
+
+      relatedReviewsApproved:
+        0,
+    };
+  } else if (
+    candidateOptions.length ===
+    1
+  ) {
+    tmdbId =
+      candidateOptions[0]
+        .tmdbId;
+
+    selectedCandidateYear =
+      candidateOptions[0]
+        .year ??
+      null;
+
+    selectedCandidateTitle =
+      candidateOptions[0]
+        .title ??
+      null;
+  } else if (
+    review.candidateTmdbId
+  ) {
+    /*
+     * Final backward-compatible fallback.
+     *
+     * This matters if TMDB candidate
+     * refreshing temporarily fails and an
+     * older row does not have candidateOptions.
+     */
+    tmdbId =
+      review.candidateTmdbId;
+
+    selectedCandidateYear =
+      review.candidateYear ??
+      null;
+
+    selectedCandidateTitle =
+      review.candidateTitle ??
+      null;
+  }
+
+  if (!tmdbId) {
     return {
       success:
         false,
@@ -383,12 +690,12 @@ export async function approveMatchReview(
   }
 
   /*
-   * A real source publication
+   * A genuine source publication
    * timestamp is required.
    *
-   * Do not substitute review creation
-   * time because that would fabricate
-   * the detection timestamp.
+   * Never substitute the review creation
+   * timestamp because that would fabricate
+   * when the detection occurred.
    */
   if (
     !review.publishedAt
@@ -402,17 +709,17 @@ export async function approveMatchReview(
 
       reviewId,
 
-      tmdbId:
-        review.candidateTmdbId,
+      tmdbId,
 
       relatedReviewsApproved:
         0,
     };
   }
 
-  const tmdbId =
-    review.candidateTmdbId;
-
+  /*
+   * Refresh authoritative metadata for
+   * the exact movie selected by Admin.
+   */
   const movie =
     await getTmdbMovieDetails(
       tmdbId,
@@ -461,24 +768,29 @@ export async function approveMatchReview(
         )
       : null;
 
+  /*
+   * Prefer CinemaCity's reported year.
+   *
+   * If unavailable, use the year belonging
+   * to the exact candidate selected by the
+   * administrator.
+   */
   const year =
     review.year ??
-    review.candidateYear ??
+    selectedCandidateYear ??
     getYearFromDate(
       movie.release_date,
     ) ??
     "Unknown";
 
   /*
-   * A manually approved identity is
-   * now considered a valid detection.
-   *
-   * Missing release milestones do not
-   * invalidate that detection.
+   * A manually confirmed identity is a
+   * valid detection even when TMDB does
+   * not currently have the applicable
+   * official release milestone.
    */
   await saveCloudDetection({
     tmdbId:
-
       movie.id,
 
     title:
@@ -538,9 +850,33 @@ export async function approveMatchReview(
   });
 
   /*
-   * Reconcile all stale PENDING or
-   * legacy RESOLVED reviews belonging
-   * to this same source detection.
+   * Preserve exactly which candidate the
+   * human administrator approved.
+   */
+  await recordApprovedMatchReviewCandidate({
+    id:
+      reviewId,
+
+    candidate: {
+      tmdbId:
+        movie.id,
+
+      title:
+        selectedCandidateTitle ??
+        movie.title,
+
+      year:
+        selectedCandidateYear ??
+        getYearFromDate(
+          movie.release_date,
+        ),
+    },
+  });
+
+  /*
+   * Reconcile other stale pending or
+   * legacy resolved reviews representing
+   * this same CinemaCity detection.
    */
   const relatedReviewsApproved =
     await approveRelatedMatchReviews({
@@ -567,8 +903,8 @@ export async function approveMatchReview(
     message:
       theatricalRelease ||
       digitalRelease
-        ? "Match approved and detection saved."
-        : "Match approved and detection saved. Official release metadata is currently unavailable.",
+        ? `TMDB ${tmdbId} approved and detection saved.`
+        : `TMDB ${tmdbId} approved and detection saved. Official release metadata is currently unavailable.`,
 
     reviewId,
 

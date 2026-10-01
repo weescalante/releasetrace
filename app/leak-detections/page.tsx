@@ -136,7 +136,7 @@ function getFeedHealth(
   };
 }
 
-export default async function ShadowZonePage() {
+export default async function LeakDetectionsPage() {
   const [
     camPage,
     webPage,
@@ -185,7 +185,7 @@ export default async function ShadowZonePage() {
           </p>
 
           <h1 className="mt-3 text-4xl font-bold tracking-tight sm:text-5xl">
-            The Shadow Zone
+            Leak Detections
           </h1>
 
           <p className="mt-4 max-w-2xl text-lg leading-8 text-zinc-300">
@@ -279,7 +279,7 @@ export default async function ShadowZonePage() {
         />
 
         <p className="mt-14 border-t border-zinc-900 pt-5 text-xs leading-6 text-zinc-600">
-          ShadowWindow reports
+          Watch Leaks reports
           unauthorized availability
           detections and official release
           timing. No unauthorized links

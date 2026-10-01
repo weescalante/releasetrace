@@ -17,8 +17,13 @@ import {
 import {
   approveRelatedMatchReviews,
   saveMatchReview,
+  type MatchReviewCandidate,
   type MatchReviewReason,
 } from "../lib/matchReviews";
+
+import {
+  shouldExcludeMovieByCountry,
+} from "../lib/titleEligibility";
 
 export type Signal =
   | "CAM"
@@ -171,6 +176,9 @@ type TmdbLookupResult = {
   candidateYear: string | null;
 
   confidence: number | null;
+
+  candidateOptions?:
+    MatchReviewCandidate[];
 
   details: string | null;
 };
@@ -1140,16 +1148,23 @@ async function buildAiCandidate(
     [];
 
   const originCountries =
-    details
-      ?.origin_country
-      ?.length
-      ? details
-          .origin_country
-      : productionCountries.length
-        ? productionCountries
-        : candidate
+    Array.from(
+      new Set([
+        ...(
+          details
+            ?.origin_country ??
+          []
+        ),
+
+        ...productionCountries,
+
+        ...(
+          candidate
             .origin_country ??
-          [];
+          []
+        ),
+      ]),
+    );
 
   const releaseDate =
     details
@@ -1219,6 +1234,202 @@ async function buildAiCandidate(
   };
 }
 
+function buildCandidateMatchedSignals(
+  score: TmdbCandidateScore,
+
+  sourceYear: string,
+) {
+  const signals:
+    string[] =
+    [];
+
+  if (
+    score.exactTitle
+  ) {
+    signals.push(
+      "Exact title",
+    );
+  } else {
+    signals.push(
+      `Title ${Math.round(
+        score.titleSimilarity *
+          100,
+      )}%`,
+    );
+  }
+
+  if (
+    /^\d{4}$/.test(
+      sourceYear,
+    ) &&
+    score.candidateYear ===
+      sourceYear
+  ) {
+    signals.push(
+      "Exact year",
+    );
+  } else if (
+    score.candidateYear
+  ) {
+    signals.push(
+      `TMDB year ${score.candidateYear}`,
+    );
+  }
+
+  if (
+    score.descriptionSimilarity >
+    0
+  ) {
+    signals.push(
+      `Plot ${Math.round(
+        score.descriptionSimilarity *
+          100,
+      )}%`,
+    );
+  }
+
+  return signals;
+}
+
+async function buildMatchReviewCandidateOption(
+  score: TmdbCandidateScore,
+
+  sourceYear: string,
+): Promise<
+  MatchReviewCandidate
+> {
+  const richCandidate =
+    await buildAiCandidate(
+      score.candidate,
+    );
+
+  return {
+    tmdbId:
+      richCandidate.tmdbId,
+
+    title:
+      richCandidate.title,
+
+    originalTitle:
+      richCandidate
+        .originalTitle,
+
+    year:
+      richCandidate.year ??
+      score.candidateYear,
+
+    releaseDate:
+      richCandidate
+        .releaseDate,
+
+    overview:
+      richCandidate.overview,
+
+    posterPath:
+      score.candidate
+        .poster_path ??
+      null,
+
+    genres:
+      richCandidate.genres,
+
+    originalLanguage:
+      richCandidate
+        .originalLanguage,
+
+    originCountries:
+      richCandidate
+        .originCountries,
+
+    runtime:
+      richCandidate.runtime,
+
+    imdbId:
+      richCandidate.imdbId,
+
+    confidence:
+      score.confidence,
+
+    matchedSignals:
+      buildCandidateMatchedSignals(
+        score,
+
+        sourceYear,
+      ),
+  };
+}
+
+async function buildMatchReviewCandidateOptions(
+  scoredCandidates:
+    TmdbCandidateScore[],
+
+  sourceYear: string,
+): Promise<
+  MatchReviewCandidate[]
+> {
+  /*
+   * For AMBIGUOUS reviews, show only
+   * candidates that passed the normal
+   * title-similarity threshold.
+   *
+   * TITLE_MISMATCH reviews may have no
+   * candidate above that threshold, so in
+   * that case preserve the best TMDB search
+   * results for human inspection.
+   */
+  const plausibleCandidates =
+    scoredCandidates.filter(
+      (score) =>
+        score.titleSimilarity >=
+        TITLE_MATCH_THRESHOLD,
+    );
+
+  const candidatePool =
+    plausibleCandidates.length >
+    0
+      ? plausibleCandidates
+      : scoredCandidates;
+
+  const limitedCandidates =
+    candidatePool.slice(
+      0,
+
+      AI_MAX_CANDIDATES,
+    );
+
+  const options:
+    MatchReviewCandidate[] =
+    [];
+
+  for (
+    const score of
+    limitedCandidates
+  ) {
+    const option =
+      await buildMatchReviewCandidateOption(
+        score,
+
+        sourceYear,
+      );
+
+    if (
+      shouldExcludeMovieByCountry({
+        originCountries:
+          option
+            .originCountries,
+      })
+    ) {
+      continue;
+    }
+
+    options.push(
+      option,
+    );
+  }
+
+  return options;
+}
+
 async function tryAiMatchFallback({
   evidence,
 
@@ -1283,20 +1494,73 @@ async function tryAiMatchFallback({
      * Retrieve richer TMDB metadata only
      * for candidates that actually require
      * AI disambiguation.
+     *
+     * Country eligibility is checked here
+     * before Gemini sees the candidate.
+     *
+     * That prevents an India-origin or
+     * India-production TMDB record from
+     * being selected automatically.
      */
-    const aiCandidates:
-      AiMatchCandidate[] =
+    const eligibleCandidates: {
+      source:
+        TmdbSearchCandidate;
+
+      ai:
+        AiMatchCandidate;
+    }[] =
       [];
 
     for (
       const candidate of
       limitedCandidates
     ) {
-      aiCandidates.push(
+      const aiCandidate =
         await buildAiCandidate(
           candidate,
-        ),
+        );
+
+      if (
+        shouldExcludeMovieByCountry({
+          originCountries:
+            aiCandidate
+              .originCountries,
+        })
+      ) {
+        continue;
+      }
+
+      eligibleCandidates.push({
+        source:
+          candidate,
+
+        ai:
+          aiCandidate,
+      });
+    }
+
+    const aiCandidates =
+      eligibleCandidates.map(
+        (
+          candidate,
+        ) =>
+          candidate.ai,
       );
+
+    if (
+      aiCandidates.length ===
+      0
+    ) {
+      return {
+        selectedCandidate:
+          null,
+
+        confidence:
+          null,
+
+        details:
+          "All plausible TMDB candidates were excluded by country eligibility.",
+      };
     }
 
     const aiResult =
@@ -1416,13 +1680,16 @@ async function tryAiMatchFallback({
      * our own TMDB search actually supplied.
      */
     const selectedCandidate =
-      limitedCandidates.find(
-        (candidate) =>
-          candidate.id ===
+      eligibleCandidates.find(
+        (
+          candidate,
+        ) =>
+          candidate.source.id ===
           aiResult
             .selectedCandidate
             ?.tmdbId,
-      );
+      )
+        ?.source;
 
     if (
       !selectedCandidate
@@ -2136,6 +2403,65 @@ async function fetchReleaseDatesForCandidate(
   const token =
     getTmdbToken();
 
+  /*
+   * Final eligibility guard before a
+   * verified TMDB identity can become
+   * a Watch Leaks detection.
+   *
+   * Search results normally expose
+   * origin_country, but movie details
+   * also expose production countries.
+   *
+   * We check both so India-origin or
+   * India-production films cannot slip
+   * through when source metadata is
+   * incomplete.
+   */
+  const movieDetails =
+    await fetchTmdbMovieDetails(
+      candidate.id,
+    );
+
+  if (
+    shouldExcludeMovieByCountry({
+      originCountries:
+        movieDetails
+          ?.origin_country ??
+        candidate
+          .origin_country ??
+        null,
+
+      productionCountries:
+        movieDetails
+          ?.production_countries ??
+        null,
+    })
+  ) {
+    return {
+      match:
+        null,
+
+      reviewReason:
+        null,
+
+      candidateTmdbId:
+        candidate.id,
+
+      candidateTitle:
+        candidate.title,
+
+      candidateYear:
+        getCandidateYear(
+          candidate,
+        ),
+
+      confidence,
+
+      details:
+        `TMDB movie ${candidate.id} was excluded by country eligibility.`,
+    };
+  }
+
   const releaseResponse =
     await fetch(
       `https://api.themoviedb.org/3/movie/${candidate.id}/release_dates`,
@@ -2348,11 +2674,71 @@ async function findTmdbMovie({
           )
         : [];
 
-    const candidates =
+    const discoveredCandidates =
       dedupeCandidates([
         ...yearCandidates,
         ...broadCandidates,
       ]);
+
+    /*
+     * TMDB search results normally expose
+     * origin_country.
+     *
+     * Remove clearly excluded candidates
+     * before deterministic matching,
+     * Gemini, or Match Review.
+     */
+    const candidates =
+      discoveredCandidates.filter(
+        (
+          candidate,
+        ) =>
+          !shouldExcludeMovieByCountry({
+            originCountries:
+              candidate
+                .origin_country ??
+              null,
+          }),
+      );
+
+    /*
+     * If TMDB found candidates but every
+     * one of them is excluded, this is not
+     * an unmatched-title problem and should
+     * not create Admin Review noise.
+     */
+    if (
+      discoveredCandidates.length >
+        0 &&
+      candidates.length ===
+        0
+    ) {
+      return {
+        match:
+          null,
+
+        reviewReason:
+          null,
+
+        candidateTmdbId:
+          null,
+
+        candidateTitle:
+          null,
+
+        candidateYear:
+          null,
+
+        confidence:
+          null,
+
+        candidateOptions:
+          [],
+
+        details:
+          "All TMDB candidates were excluded by country eligibility.",
+      };
+    }
 
     const scoredCandidates =
       candidates
@@ -2503,9 +2889,96 @@ async function findTmdbMovie({
          * Keep the item in Match Review and
          * attach Gemini's reasoning to the
          * diagnostic.
+         *
+         * Preserve the plausible TMDB
+         * candidates as well so Admin can
+         * present the exact human choice.
          */
+        const candidateOptions =
+          await buildMatchReviewCandidateOptions(
+            scoredCandidates,
+
+            year,
+          );
+
+        /*
+         * Rich TMDB details may reveal that
+         * every remaining candidate is from
+         * an excluded country.
+         *
+         * In that case, suppress the review
+         * entirely instead of asking Admin
+         * to inspect a title we do not want
+         * in Watch Leaks.
+         */
+        if (
+          candidateOptions.length ===
+          0 &&
+          scoredCandidates.length >
+          0
+        ) {
+          return {
+            match:
+              null,
+
+            reviewReason:
+              null,
+
+            candidateTmdbId:
+              null,
+
+            candidateTitle:
+              null,
+
+            candidateYear:
+              null,
+
+            confidence:
+              null,
+
+            candidateOptions:
+              [],
+
+            details:
+              "All plausible TMDB candidates were excluded by country eligibility.",
+          };
+        }
+
+        const primaryCandidate =
+          candidateOptions[0];
+
         return {
           ...selection.review,
+
+          candidateTmdbId:
+            primaryCandidate
+              ?.tmdbId ??
+            selection
+              .review
+              .candidateTmdbId,
+
+          candidateTitle:
+            primaryCandidate
+              ?.title ??
+            selection
+              .review
+              .candidateTitle,
+
+          candidateYear:
+            primaryCandidate
+              ?.year ??
+            selection
+              .review
+              .candidateYear,
+
+          confidence:
+            primaryCandidate
+              ?.confidence ??
+            selection
+              .review
+              .confidence,
+
+          candidateOptions,
 
           details:
             combineDetails(
@@ -2834,6 +3307,8 @@ async function saveReviewSafely({
 
   confidence,
 
+  candidateOptions,
+
   details,
 }: {
   sourceUrl: string;
@@ -2876,6 +3351,9 @@ async function saveReviewSafely({
 
   confidence:
     number | null;
+
+  candidateOptions:
+    MatchReviewCandidate[];
 
   details:
     string | null;
@@ -2947,6 +3425,8 @@ async function saveReviewSafely({
       candidateYear,
 
       confidence,
+
+      candidateOptions,
 
       details,
     });
@@ -3264,6 +3744,27 @@ export async function getCinemaCityMovies(): Promise<
             }
 
             /*
+             * Country eligibility:
+             *
+             * CinemaCity already supplies
+             * country metadata for many
+             * entries.
+             *
+             * Reject excluded source titles
+             * immediately so we do not spend
+             * TMDB/Gemini work on them and
+             * they never enter Match Review.
+             */
+            if (
+              shouldExcludeMovieByCountry({
+                sourceCountry:
+                  country,
+              })
+            ) {
+              return emptyMovie;
+            }
+
+            /*
              * Ignore obviously historical
              * entries that cannot be relevant
              * to the current Watch Leaks
@@ -3359,6 +3860,11 @@ export async function getCinemaCityMovies(): Promise<
                 confidence:
                   lookup
                     .confidence,
+
+                candidateOptions:
+                  lookup
+                    .candidateOptions ??
+                  [],
 
                 details:
                   lookup.details,
