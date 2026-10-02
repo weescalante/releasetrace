@@ -253,13 +253,28 @@ async function findByEpisodeAirDate({
   tmdbId,
 
   episodeAirDate,
+
+  dateOnlyRowsOnly =
+    false,
 }: {
   tmdbId:
     number;
 
   episodeAirDate:
     string;
+
+  dateOnlyRowsOnly?:
+    boolean;
 }) {
+  const dateOnlyClause =
+    dateOnlyRowsOnly
+      ? `
+          AND season_number IS NULL
+
+          AND episode_number IS NULL
+        `
+      : "";
+
   const result =
     await turso.execute({
       sql: `
@@ -286,6 +301,8 @@ async function findByEpisodeAirDate({
           AND detection_type = 'WEB'
 
           AND episode_air_date = ?
+
+          ${dateOnlyClause}
 
         ORDER BY
           datetime(
@@ -341,26 +358,29 @@ async function findExistingTvDetection(
   detection:
     PredbTvDetectionInput,
 ) {
-  if (
+  const seasonNumber =
     detection
-      .seasonNumber !==
+      .seasonNumber;
+
+  const episodeNumber =
+    detection
+      .episodeNumber;
+
+  const hasNumberedIdentity =
+    seasonNumber !==
       null &&
-    detection
-      .episodeNumber !==
-      null
-  ) {
+    episodeNumber !==
+      null;
+
+  if (hasNumberedIdentity) {
     const exact =
       await findBySeasonEpisode({
         tmdbId:
           detection.tmdbId,
 
-        seasonNumber:
-          detection
-            .seasonNumber,
+        seasonNumber,
 
-        episodeNumber:
-          detection
-            .episodeNumber,
+        episodeNumber,
       });
 
     if (exact) {
@@ -368,31 +388,52 @@ async function findExistingTvDetection(
     }
   }
 
-  /*
-   * Date lookup is also used as a secondary
-   * fallback for SxxExx releases.
-   *
-   * This lets an older date-only record be
-   * upgraded later if TMDB eventually gives
-   * us the exact season/episode identity.
-   */
   const airDate =
     normalizeDateOnly(
       detection
         .episodeAirDate,
     );
 
-  if (airDate) {
-    return await findByEpisodeAirDate({
-      tmdbId:
-        detection.tmdbId,
-
-      episodeAirDate:
-        airDate,
-    });
+  if (!airDate) {
+    return undefined;
   }
 
-  return undefined;
+  /*
+   * A numbered SxxExx detection must never
+   * collapse into a DIFFERENT numbered
+   * episode merely because both episodes
+   * share the same air date.
+   *
+   * Example:
+   *
+   *   S01E01 -> 2026-09-01
+   *   S01E02 -> 2026-09-01
+   *
+   * Those are separate logical episodes.
+   *
+   * For a numbered incoming detection, the
+   * air-date fallback is therefore allowed
+   * to match only an older DATE-ONLY row.
+   *
+   * That preserves the intended upgrade path:
+   *
+   *   older date-only record
+   *   ->
+   *   later resolved SxxExx identity
+   *
+   * without allowing one numbered episode to
+   * overwrite another numbered episode.
+   */
+  return await findByEpisodeAirDate({
+    tmdbId:
+      detection.tmdbId,
+
+    episodeAirDate:
+      airDate,
+
+    dateOnlyRowsOnly:
+      hasNumberedIdentity,
+  });
 }
 
 async function findStoredRow(

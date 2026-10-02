@@ -117,6 +117,10 @@ export async function GET() {
             try {
               const match =
                 await matchTvSource({
+                  sourceReleaseName:
+                    event.release
+                      .releaseName,
+
                   seriesTitle:
                     event.parsed
                       .seriesTitle,

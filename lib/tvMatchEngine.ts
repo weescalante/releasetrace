@@ -6,7 +6,23 @@ import {
   resolveTvSplitSeries,
 } from "./tvSplitSeriesResolver";
 
+import {
+  verifyTvMatchWithAI,
+} from "./aiTvMatchVerifier";
+
 export type TvMatchInput = {
+  /*
+   * Full original source release name.
+   *
+   * Optional for backward compatibility.
+   *
+   * Example:
+   *
+   * Big.Brother.US.S28E41.1080p.WEB.h264-EDITH
+   */
+  sourceReleaseName?:
+    string | null;
+
   seriesTitle: string;
 
   titleCandidates: string[];
@@ -1762,6 +1778,344 @@ async function resolveSplitSeriesCandidate({
   };
 }
 
+/*
+ * Gemini is a semantic identity fallback only.
+ *
+ * It may choose only from TMDB candidates our
+ * deterministic matcher already supplied.
+ *
+ * It cannot establish that an episode exists.
+ * When the source contains SxxExx, the selected
+ * series is always re-checked against TMDB before
+ * a MATCHED result is allowed.
+ *
+ * Date-based releases remain under the existing
+ * exact-air-date resolver and are not promoted by
+ * AI alone.
+ */
+async function resolveWithAi({
+  input,
+
+  evaluations,
+
+  candidateOptions,
+}: {
+  input:
+    TvMatchInput;
+
+  evaluations:
+    CandidateEvaluation[];
+
+  candidateOptions:
+    TvCandidateOption[];
+}): Promise<
+  TvMatchResult | null
+> {
+  if (
+    !input
+      .sourceReleaseName
+      ?.trim() ||
+    candidateOptions.length ===
+      0
+  ) {
+    return null;
+  }
+
+  const hasNumberedEpisode =
+    input.seasonNumber !==
+      null &&
+    input.episodeNumber !==
+      null;
+
+  const isDateBasedEpisode =
+    input.episodeAirDate !==
+      null &&
+    !hasNumberedEpisode;
+
+  /*
+   * The exact-date resolver is the factual
+   * authority for date-based episode releases.
+   * Do not let semantic AI reasoning bypass it.
+   */
+  if (
+    isDateBasedEpisode
+  ) {
+    return null;
+  }
+
+  try {
+    const verification =
+      await verifyTvMatchWithAI({
+        sourceReleaseName:
+          input.sourceReleaseName,
+
+        seriesTitle:
+          input.seriesTitle,
+
+        titleCandidates:
+          input.titleCandidates,
+
+        apparentYear:
+          input.apparentYear,
+
+        seasonNumber:
+          input.seasonNumber,
+
+        episodeNumber:
+          input.episodeNumber,
+
+        episodeAirDate:
+          input.episodeAirDate,
+
+        candidates:
+          candidateOptions.map(
+            (
+              candidate,
+            ) => ({
+              tmdbId:
+                candidate.tmdbId,
+
+              title:
+                candidate.title,
+
+              originalTitle:
+                candidate.originalTitle,
+
+              firstAirDate:
+                candidate.firstAirDate,
+
+              firstAirYear:
+                candidate.firstAirYear,
+
+              originCountries:
+                candidate.originCountries,
+
+              overview:
+                candidate.overview,
+
+              seasonNumber:
+                candidate.seasonNumber,
+
+              episodeNumber:
+                candidate.episodeNumber,
+
+              episodeCheck:
+                candidate.episodeCheck,
+
+              episodeTitle:
+                candidate.episodeTitle,
+
+              episodeAirDate:
+                candidate.episodeAirDate,
+
+              deterministicConfidence:
+                candidate.confidence,
+            }),
+          ),
+      });
+
+    if (
+      verification.decision !==
+        "MATCH" ||
+      !verification.selectedCandidate
+    ) {
+      return null;
+    }
+
+    const selectedTmdbId =
+      verification
+        .selectedCandidate
+        .tmdbId;
+
+    const selectedEvaluation =
+      evaluations.find(
+        (
+          evaluation,
+        ) =>
+          evaluation
+            .candidate.id ===
+          selectedTmdbId,
+      );
+
+    if (
+      !selectedEvaluation
+    ) {
+      return null;
+    }
+
+    /*
+     * Re-run our own deterministic evaluation for
+     * the AI-selected series.
+     *
+     * For SxxExx this forces an exact TMDB episode
+     * lookup even when the candidate originally
+     * scored too low to enter candidatesToCheck.
+     */
+    const verifiedEvaluation =
+      await evaluateCandidate({
+        candidate:
+          selectedEvaluation
+            .candidate,
+
+        input,
+
+        checkEpisode:
+          hasNumberedEpisode,
+      });
+
+    const selectedOption =
+      toCandidateOption(
+        verifiedEvaluation,
+
+        input,
+      );
+
+    const combinedOptions = [
+      selectedOption,
+
+      ...candidateOptions.filter(
+        (
+          candidate,
+        ) =>
+          candidate.tmdbId !==
+          selectedTmdbId,
+      ),
+    ].slice(
+      0,
+      6,
+    );
+
+    /*
+     * Apparent year remains a deterministic
+     * factual constraint. AI may resolve naming
+     * ambiguity, but it does not override a clear
+     * TMDB year conflict.
+     */
+    if (
+      input.apparentYear !==
+        null &&
+      verifiedEvaluation
+        .yearDifference !==
+        null &&
+      verifiedEvaluation
+        .yearDifference >
+        1
+    ) {
+      return reviewResult({
+        input,
+
+        candidateOptions:
+          combinedOptions,
+
+        details:
+          `AI semantic identity verification selected TMDB TV ${selectedTmdbId} "${selectedEvaluation.candidate.name}", but its TMDB first-air year differs from the apparent PreDB series year ${input.apparentYear}. Manual review is required.`,
+      });
+    }
+
+    /*
+     * Critical factual safeguard:
+     *
+     * Gemini can select the series identity, but
+     * TMDB must independently confirm the exact
+     * numbered episode before MATCHED is allowed.
+     */
+    if (
+      hasNumberedEpisode &&
+      verifiedEvaluation
+        .episodeCheck !==
+        "CONFIRMED"
+    ) {
+      return reviewResult({
+        input,
+
+        candidateOptions:
+          combinedOptions,
+
+        details:
+          `AI semantic identity verification selected TMDB TV ${selectedTmdbId} "${selectedEvaluation.candidate.name}", but TMDB did not confirm S${String(
+            input.seasonNumber,
+          ).padStart(
+            2,
+            "0",
+          )}E${String(
+            input.episodeNumber,
+          ).padStart(
+            2,
+            "0",
+          )}. Manual review is required.`,
+      });
+    }
+
+    /*
+     * Keep the existing deterministic confidence
+     * scale intact. The AI confidence is recorded
+     * in detailsText rather than replacing or
+     * inflating our matcher score.
+     */
+    const confidence =
+      verifiedEvaluation
+        .confidence;
+
+    return createMatchedResult({
+      input,
+
+      evaluation:
+        verifiedEvaluation,
+
+      confidence,
+
+      seasonNumber:
+        input.seasonNumber,
+
+      episodeNumber:
+        input.episodeNumber,
+
+      episodeTitle:
+        verifiedEvaluation
+          .episode
+          ?.name ??
+        null,
+
+      episodeAirDate:
+        verifiedEvaluation
+          .episode
+          ?.air_date ??
+        input.episodeAirDate,
+
+      candidateOptions:
+        combinedOptions,
+
+      detailsText:
+        hasNumberedEpisode
+          ? `AI semantic identity verification selected TMDB TV ${selectedTmdbId} "${selectedEvaluation.candidate.name}" from the supplied candidates, and TMDB independently confirmed S${String(
+              input.seasonNumber,
+            ).padStart(
+              2,
+              "0",
+            )}E${String(
+              input.episodeNumber,
+            ).padStart(
+              2,
+              "0",
+            )}. AI confidence: ${verification.confidence}/100.`
+          : `AI semantic identity verification selected TMDB TV ${selectedTmdbId} "${selectedEvaluation.candidate.name}" from the supplied candidates. AI confidence: ${verification.confidence}/100.`,
+    });
+  } catch (error) {
+    /*
+     * AI is a fallback, not a dependency for
+     * deterministic matching. If Gemini is
+     * unavailable or malformed, preserve the
+     * existing REVIEW behavior below.
+     */
+    console.error(
+      `TV AI identity verification failed for "${input.seriesTitle}":`,
+      error,
+    );
+
+    return null;
+  }
+}
+
 export async function matchTvSource(
   input:
     TvMatchInput,
@@ -2092,6 +2446,44 @@ export async function matchTvSource(
       splitResolved
     ) {
       return splitResolved;
+    }
+  }
+
+  /*
+   * AI is reserved for semantic series-identity
+   * ambiguity.
+   *
+   * Exact-title candidates do not need AI merely
+   * because a factual year or episode check failed.
+   * Close competing candidates are still identity
+   * ambiguity even when the leading title is exact.
+   */
+  const needsAiIdentityResolution =
+    (
+      !best.exactTitle &&
+      (
+        lowConfidence ||
+        weakTitle
+      )
+    ) ||
+    closeCandidates;
+
+  if (
+    needsAiIdentityResolution
+  ) {
+    const aiResolved =
+      await resolveWithAi({
+        input,
+
+        evaluations,
+
+        candidateOptions,
+      });
+
+    if (
+      aiResolved
+    ) {
+      return aiResolved;
     }
   }
 

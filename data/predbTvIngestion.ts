@@ -485,6 +485,9 @@ export async function ingestPredbTv({
 
       const match =
         await matchTvSource({
+          sourceReleaseName:
+            release.releaseName,
+
           seriesTitle:
             parsed.seriesTitle,
 

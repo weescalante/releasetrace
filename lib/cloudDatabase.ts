@@ -782,7 +782,11 @@ function getPublicDedupedCte(
       FROM detections
 
       WHERE
-        ${whereClause}
+        media_type = 'MOVIE'
+
+        AND (
+          ${whereClause}
+        )
     ),
 
     ranked_detections AS (
@@ -1572,6 +1576,14 @@ export async function getCloudAdminDetectionsPage({
       detectionType,
     );
 
+  const movieWhereClause = `
+    media_type = 'MOVIE'
+
+    AND (
+      ${whereClause}
+    )
+  `;
+
   const [
     detectionsResult,
     countResult,
@@ -1607,7 +1619,7 @@ export async function getCloudAdminDetectionsPage({
           FROM detections
 
           WHERE
-            ${whereClause}
+            ${movieWhereClause}
 
           ORDER BY
             datetime(
@@ -1633,7 +1645,7 @@ export async function getCloudAdminDetectionsPage({
         FROM detections
 
         WHERE
-          ${whereClause}
+          ${movieWhereClause}
       `),
     ]);
 
