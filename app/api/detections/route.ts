@@ -1,32 +1,51 @@
-import { NextRequest, NextResponse } from "next/server";
 import {
-  DetectionType,
+  NextRequest,
+  NextResponse,
+} from "next/server";
+
+import {
   getCloudPublicDetectionsPage,
+  type DetectionType,
 } from "../../../lib/cloudDatabase";
 
-export const dynamic = "force-dynamic";
+export const dynamic =
+  "force-dynamic";
 
-export async function GET(request: NextRequest) {
+export async function GET(
+  request: NextRequest,
+) {
   try {
     const searchParams =
       request.nextUrl.searchParams;
 
-    const type = searchParams.get("type");
+    const type =
+      searchParams.get("type");
 
-    const limit = Number(
-      searchParams.get("limit") ?? "8",
-    );
+    const limit =
+      Number(
+        searchParams.get(
+          "limit",
+        ) ?? "8",
+      );
 
-    const offset = Number(
-      searchParams.get("offset") ?? "0",
-    );
+    const offset =
+      Number(
+        searchParams.get(
+          "offset",
+        ) ?? "0",
+      );
 
-    if (type !== "CAM" && type !== "WEB") {
+    if (
+      type !== "CAM" &&
+      type !== "WEB" &&
+      type !== "BLURAY"
+    ) {
       return NextResponse.json(
         {
           success: false,
+
           message:
-            "Detection type must be CAM or WEB.",
+            "Detection type must be CAM, WEB, or BLURAY.",
         },
         {
           status: 400,
@@ -38,16 +57,20 @@ export async function GET(request: NextRequest) {
       type as DetectionType;
 
     const page =
-      await getCloudPublicDetectionsPage({
-        detectionType,
-        limit,
-        offset,
-      });
+      await getCloudPublicDetectionsPage(
+        {
+          detectionType,
+          limit,
+          offset,
+        },
+      );
 
-    return NextResponse.json({
-      success: true,
-      ...page,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        ...page,
+      },
+    );
   } catch (error) {
     console.error(
       "Detection pagination failed:",
@@ -57,6 +80,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       {
         success: false,
+
         message:
           "Unable to load detections.",
       },

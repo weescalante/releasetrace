@@ -14,7 +14,8 @@ export type MatchReviewStatus =
 
 export type MatchReviewDetectionType =
   | "CAM"
-  | "WEB";
+  | "WEB"
+  | "BLURAY";
 
 export type MatchReviewCandidate = {
   tmdbId: number;

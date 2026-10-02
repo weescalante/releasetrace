@@ -900,11 +900,12 @@ export async function approveMatchReview(
     success:
       true,
 
-    message:
-      theatricalRelease ||
-      digitalRelease
-        ? `TMDB ${tmdbId} approved and detection saved.`
-        : `TMDB ${tmdbId} approved and detection saved. Official release metadata is currently unavailable.`,
+message:
+  theatricalRelease ||
+  digitalRelease ||
+  physicalRelease
+    ? `TMDB ${tmdbId} approved and detection saved.`
+    : `TMDB ${tmdbId} approved and detection saved. Official release metadata is currently unavailable.`,
 
     reviewId,
 

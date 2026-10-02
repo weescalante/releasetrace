@@ -318,20 +318,20 @@ export default async function TVShowsPage({
       <SiteHeader />
 
       <section className="mx-auto w-full max-w-7xl px-6 py-12">
-        <p className="text-xs font-medium uppercase tracking-[0.25em] text-red-500">
-          Release Intelligence
-        </p>
+<p className="text-xs font-medium uppercase tracking-[0.25em] text-red-500">
+  Latest Television Releases
+</p>
 
-        <h1 className="mt-3 text-4xl font-bold tracking-tight">
-          TV Shows
-        </h1>
+<h1 className="mt-3 text-4xl font-bold tracking-tight">
+  Latest TV Shows
+</h1>
 
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
-          Recent English-language
-          television releases focused
-          on the US, Canada and major
-          Western markets.
-        </p>
+<p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
+  The latest English-language
+  television shows released
+  across the US, Canada and
+  major Western markets.
+</p>
 
         <TitleBrowser
           items={items}

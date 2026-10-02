@@ -317,9 +317,23 @@ function formatDetectionRegion(
 function getDetectionReleaseStage(
   detectionType: DetectionType,
 ) {
-  return detectionType === "CAM"
-    ? "Theatrical"
-    : "Digital";
+  if (detectionType === "CAM") {
+    return "Theatrical";
+  }
+
+  if (detectionType === "WEB") {
+    return "Digital";
+  }
+
+  return "Physical";
+}
+
+function formatDetectionType(
+  detectionType: DetectionType,
+) {
+  return detectionType === "BLURAY"
+    ? "BLU-RAY"
+    : detectionType;
 }
 
 function getLatencyInfo(
@@ -764,7 +778,7 @@ function getBackDestination(
         "/leak-detections",
 
       label:
-        "Back to Shadow Zone",
+        "Back to Leak Detections",
     };
   }
 
@@ -854,9 +868,17 @@ function buildProgressionText(
         "WEB",
     );
 
+  const firstBluray =
+    sorted.find(
+      (detection) =>
+        detection.detectionType ===
+        "BLURAY",
+    );
+
   const events = [
     firstCam,
     firstWeb,
+    firstBluray,
   ]
     .filter(
       (
@@ -885,7 +907,9 @@ function buildProgressionText(
   return events
     .map(
       (detection) =>
-        `${detection.detectionType} ${formatCompactDetectionDate(
+        `${formatDetectionType(
+          detection.detectionType,
+        )} ${formatCompactDetectionDate(
           detection.detectedAt,
         )}`,
     )
@@ -1269,6 +1293,13 @@ function OnlineAvailabilitySummary({
         "WEB",
     );
 
+  const blurayDetections =
+    detections.filter(
+      (detection) =>
+        detection.detectionType ===
+        "BLURAY",
+    );
+
   const firstCam =
     camDetections[0] ??
     null;
@@ -1289,6 +1320,16 @@ function OnlineAvailabilitySummary({
         1
     ] ?? null;
 
+  const firstBluray =
+    blurayDetections[0] ??
+    null;
+
+  const latestBluray =
+    blurayDetections[
+      blurayDetections.length -
+        1
+    ] ?? null;
+
   let status =
     "No Detection";
 
@@ -1296,9 +1337,32 @@ function OnlineAvailabilitySummary({
     "text-zinc-400";
 
   let statusDetail =
-    "No CAM or WEB availability has been detected for this title.";
+    "No CAM, WEB or Blu-ray availability has been detected for this title.";
 
-  if (firstWeb) {
+  if (firstBluray) {
+    status =
+      "Blu-ray Available";
+
+    statusClass =
+      "text-sky-300";
+
+    if (
+      firstCam &&
+      firstWeb
+    ) {
+      statusDetail =
+        "CAM, WEB and Blu-ray availability have all been recorded.";
+    } else if (firstWeb) {
+      statusDetail =
+        "WEB and Blu-ray availability have been recorded.";
+    } else if (firstCam) {
+      statusDetail =
+        "CAM and Blu-ray availability have been recorded.";
+    } else {
+      statusDetail =
+        "Blu-ray availability has been recorded.";
+    }
+  } else if (firstWeb) {
     status =
       "WEB Available";
 
@@ -1317,7 +1381,7 @@ function OnlineAvailabilitySummary({
       "text-red-400";
 
     statusDetail =
-      "CAM availability has been recorded. No WEB detection is currently recorded.";
+      "CAM availability has been recorded. No WEB or Blu-ray detection is currently recorded.";
   }
 
   return (
@@ -1365,7 +1429,7 @@ function OnlineAvailabilitySummary({
         </div>
       </div>
 
-      <div className="grid md:grid-cols-2">
+      <div className="grid md:grid-cols-3">
         <AvailabilityLane
           type="CAM"
           firstDetection={
@@ -1391,15 +1455,28 @@ function OnlineAvailabilitySummary({
             webDetections.length
           }
         />
+
+        <AvailabilityLane
+          type="BLURAY"
+          firstDetection={
+            firstBluray
+          }
+          latestDetection={
+            latestBluray
+          }
+          count={
+            blurayDetections.length
+          }
+        />
       </div>
 
       <p className="border-t border-zinc-800 px-4 py-2.5 text-xs leading-5 text-zinc-500">
         Availability may be observed
         across unauthorized streaming,
-        torrent-index and file-hosting
-        services. Specific monitored
-        sources and unauthorized links
-        are not published.
+        torrent-index, scene-release and
+        file-hosting services. Specific
+        monitored sources and unauthorized
+        links are not published.
       </p>
     </section>
   );
@@ -1424,7 +1501,9 @@ function AvailabilityLane({
   const typeClass =
     type === "CAM"
       ? "border-red-500/40 bg-red-500/10 text-red-400"
-      : "border-amber-400/40 bg-amber-400/10 text-amber-300";
+      : type === "WEB"
+        ? "border-amber-400/40 bg-amber-400/10 text-amber-300"
+        : "border-sky-400/40 bg-sky-400/10 text-sky-300";
 
   if (
     !firstDetection ||
@@ -1435,11 +1514,15 @@ function AvailabilityLane({
         <span
           className={`inline-block border px-2 py-0.5 text-xs font-bold ${typeClass}`}
         >
-          {type}
+          {formatDetectionType(
+            type,
+          )}
         </span>
 
         <p className="mt-3 text-sm font-semibold text-zinc-400">
-          No {type} detection recorded.
+          No {formatDetectionType(
+            type,
+          )} detection recorded.
         </p>
       </div>
     );
@@ -1459,7 +1542,9 @@ function AvailabilityLane({
         <span
           className={`border px-2 py-0.5 text-xs font-bold ${typeClass}`}
         >
-          {type}
+          {formatDetectionType(
+            type,
+          )}
         </span>
 
         <div className="text-right">
@@ -1654,7 +1739,11 @@ function DetectionHistory({
                   .detectionType ===
                 "CAM"
                   ? "border-red-500/40 bg-red-500/10 text-red-400"
-                  : "border-amber-400/40 bg-amber-400/10 text-amber-300";
+                  : detection
+                        .detectionType ===
+                      "WEB"
+                    ? "border-amber-400/40 bg-amber-400/10 text-amber-300"
+                    : "border-sky-400/40 bg-sky-400/10 text-sky-300";
 
               return (
                 <div
@@ -1685,8 +1774,10 @@ function DetectionHistory({
                       className={`inline-block border px-2 py-0.5 text-xs font-bold ${badgeClass}`}
                     >
                       {
-                        detection
-                          .detectionType
+                        formatDetectionType(
+                          detection
+                            .detectionType,
+                        )
                       }
                     </span>
                   </div>

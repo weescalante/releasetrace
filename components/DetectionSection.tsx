@@ -110,9 +110,15 @@ function formatRegion(
 function getReleaseStage(
   detectionType: DetectionType,
 ) {
-  return detectionType === "CAM"
-    ? "Theatrical"
-    : "Digital";
+  if (detectionType === "CAM") {
+    return "Theatrical";
+  }
+
+  if (detectionType === "WEB") {
+    return "Digital";
+  }
+
+  return "Physical";
 }
 
 function getReleaseContext(

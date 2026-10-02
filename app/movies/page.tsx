@@ -1,9 +1,18 @@
 import SiteHeader from "../../components/SiteHeader";
+
 import TitleBrowser, {
+  type BrowseAvailabilityBadge,
   type BrowseTitle,
 } from "../../components/TitleBrowser";
 
-type Region = "US" | "CA";
+import {
+  getCloudPublicDetections,
+  type DetectionType,
+} from "../../lib/cloudDatabase";
+
+type Region =
+  | "US"
+  | "CA";
 
 type TmdbMovie = {
   id: number;
@@ -22,9 +31,11 @@ type TmdbResponse = {
   results: TmdbMovie[];
 };
 
-type MovieWithRegions = TmdbMovie & {
-  regions: Region[];
-};
+type MovieWithRegions =
+  TmdbMovie & {
+    regions:
+      Region[];
+  };
 
 type MoviesPageProps = {
   searchParams: Promise<{
@@ -33,8 +44,11 @@ type MoviesPageProps = {
   }>;
 };
 
-const PAGE_SIZE = 32;
-const MAX_TMDB_PAGES = 100;
+const PAGE_SIZE =
+  32;
+
+const MAX_TMDB_PAGES =
+  100;
 
 const WESTERN_ORIGINS =
   "US|CA|GB|AU|NZ|IE";
@@ -42,16 +56,25 @@ const WESTERN_ORIGINS =
 function getToday() {
   return new Date()
     .toISOString()
-    .slice(0, 10);
+    .slice(
+      0,
+      10,
+    );
 }
 
 function parsePage(
-  value: string | undefined,
+  value:
+    string | undefined,
 ) {
-  const parsed = Number(value);
+  const parsed =
+    Number(
+      value,
+    );
 
   if (
-    !Number.isInteger(parsed) ||
+    !Number.isInteger(
+      parsed,
+    ) ||
     parsed < 1
   ) {
     return 1;
@@ -61,11 +84,17 @@ function parsePage(
 }
 
 async function fetchMoviePage(
-  region: Region,
-  page: number,
-): Promise<TmdbResponse> {
+  region:
+    Region,
+
+  page:
+    number,
+): Promise<
+  TmdbResponse
+> {
   const token =
-    process.env.TMDB_READ_ACCESS_TOKEN;
+    process.env
+      .TMDB_READ_ACCESS_TOKEN;
 
   if (!token) {
     throw new Error(
@@ -73,45 +102,65 @@ async function fetchMoviePage(
     );
   }
 
-  const params = new URLSearchParams({
-    language: "en-US",
-    page: String(page),
-    region,
+  const params =
+    new URLSearchParams({
+      language:
+        "en-US",
 
-    sort_by:
-      "primary_release_date.desc",
+      page:
+        String(
+          page,
+        ),
 
-    include_adult: "false",
-    include_video: "false",
+      region,
 
-    with_release_type: "2|3",
+      sort_by:
+        "primary_release_date.desc",
 
-    with_original_language: "en",
+      include_adult:
+        "false",
 
-    with_origin_country:
-      WESTERN_ORIGINS,
+      include_video:
+        "false",
 
-    "vote_count.gte": "20",
+      with_release_type:
+        "2|3",
 
-    "release_date.lte":
-      getToday(),
-  });
+      with_original_language:
+        "en",
 
-  const response = await fetch(
-    `https://api.themoviedb.org/3/discover/movie?${params.toString()}`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        accept: "application/json",
+      with_origin_country:
+        WESTERN_ORIGINS,
+
+      "vote_count.gte":
+        "20",
+
+      "release_date.lte":
+        getToday(),
+    });
+
+  const response =
+    await fetch(
+      `https://api.themoviedb.org/3/discover/movie?${params.toString()}`,
+      {
+        headers: {
+          Authorization:
+            `Bearer ${token}`,
+
+          accept:
+            "application/json",
+        },
+
+        next: {
+          revalidate:
+            3600,
+        },
       },
+    );
 
-      next: {
-        revalidate: 3600,
-      },
-    },
-  );
-
-  if (!response.ok) {
+  if (
+    !response.ok
+  ) {
     throw new Error(
       `TMDB movie request for ${region} failed with status ${response.status}.`,
     );
@@ -125,76 +174,116 @@ function addMoviesToMap(
     number,
     MovieWithRegions
   >,
-  movies: TmdbMovie[],
-  region: Region,
+
+  movies:
+    TmdbMovie[],
+
+  region:
+    Region,
 ) {
-  movies.forEach((movie) => {
-    if (
-      !movie.poster_path ||
-      !movie.release_date
-    ) {
-      return;
-    }
-
-    const existing =
-      map.get(movie.id);
-
-    if (existing) {
+  movies.forEach(
+    (movie) => {
       if (
-        !existing.regions.includes(
-          region,
-        )
+        !movie.poster_path ||
+        !movie.release_date
       ) {
-        existing.regions.push(region);
+        return;
       }
 
-      return;
-    }
+      const existing =
+        map.get(
+          movie.id,
+        );
 
-    map.set(movie.id, {
-      ...movie,
-      regions: [region],
-    });
-  });
+      if (
+        existing
+      ) {
+        if (
+          !existing.regions.includes(
+            region,
+          )
+        ) {
+          existing.regions.push(
+            region,
+          );
+        }
+
+        return;
+      }
+
+      map.set(
+        movie.id,
+        {
+          ...movie,
+
+          regions: [
+            region,
+          ],
+        },
+      );
+    },
+  );
 }
 
 function sortMovies(
-  movies: MovieWithRegions[],
+  movies:
+    MovieWithRegions[],
 ) {
-  return movies.sort((a, b) => {
-    const aTime = new Date(
-      `${a.release_date}T00:00:00Z`,
-    ).getTime();
+  return movies.sort(
+    (
+      a,
+      b,
+    ) => {
+      const aTime =
+        new Date(
+          `${a.release_date}T00:00:00Z`,
+        ).getTime();
 
-    const bTime = new Date(
-      `${b.release_date}T00:00:00Z`,
-    ).getTime();
+      const bTime =
+        new Date(
+          `${b.release_date}T00:00:00Z`,
+        ).getTime();
 
-    if (bTime !== aTime) {
-      return bTime - aTime;
-    }
+      if (
+        bTime !==
+        aTime
+      ) {
+        return (
+          bTime -
+          aTime
+        );
+      }
 
-    return (
-      b.vote_count -
-      a.vote_count
-    );
-  });
+      return (
+        b.vote_count -
+        a.vote_count
+      );
+    },
+  );
 }
 
 async function getCuratedMovies(
-  requestedPage: number,
+  requestedPage:
+    number,
 ) {
   const requiredCount =
-    requestedPage * PAGE_SIZE;
+    requestedPage *
+    PAGE_SIZE;
 
-  const movieMap = new Map<
-    number,
-    MovieWithRegions
-  >();
+  const movieMap =
+    new Map<
+      number,
+      MovieWithRegions
+    >();
 
-  let tmdbPage = 1;
-  let totalResults = 0;
-  let reachedEnd = false;
+  let tmdbPage =
+    1;
+
+  let totalResults =
+    0;
+
+  let reachedEnd =
+    false;
 
   while (
     movieMap.size <
@@ -203,7 +292,10 @@ async function getCuratedMovies(
       MAX_TMDB_PAGES &&
     !reachedEnd
   ) {
-    const [usData, canadaData] =
+    const [
+      usData,
+      canadaData,
+    ] =
       await Promise.all([
         fetchMoviePage(
           "US",
@@ -216,11 +308,16 @@ async function getCuratedMovies(
         ),
       ]);
 
-    totalResults = Math.max(
-      totalResults,
-      usData.total_results,
-      canadaData.total_results,
-    );
+    totalResults =
+      Math.max(
+        totalResults,
+
+        usData
+          .total_results,
+
+        canadaData
+          .total_results,
+      );
 
     addMoviesToMap(
       movieMap,
@@ -237,14 +334,18 @@ async function getCuratedMovies(
     const lastUsPage =
       tmdbPage >=
       Math.min(
-        usData.total_pages,
+        usData
+          .total_pages,
+
         500,
       );
 
     const lastCanadaPage =
       tmdbPage >=
       Math.min(
-        canadaData.total_pages,
+        canadaData
+          .total_pages,
+
         500,
       );
 
@@ -252,7 +353,8 @@ async function getCuratedMovies(
       lastUsPage &&
       lastCanadaPage;
 
-    tmdbPage += 1;
+    tmdbPage +=
+      1;
   }
 
   const allMovies =
@@ -263,11 +365,15 @@ async function getCuratedMovies(
     );
 
   const start =
-    (requestedPage - 1) *
+    (
+      requestedPage -
+      1
+    ) *
     PAGE_SIZE;
 
   const end =
-    start + PAGE_SIZE;
+    start +
+    PAGE_SIZE;
 
   const pageMovies =
     allMovies.slice(
@@ -275,31 +381,172 @@ async function getCuratedMovies(
       end,
     );
 
-  const totalPages = Math.max(
-    1,
-    Math.ceil(
-      totalResults /
-        PAGE_SIZE,
-    ),
-  );
+  const totalPages =
+    Math.max(
+      1,
+
+      Math.ceil(
+        totalResults /
+          PAGE_SIZE,
+      ),
+    );
 
   return {
-    movies: pageMovies,
+    movies:
+      pageMovies,
+
     totalPages,
+
     totalResults,
   };
 }
 
 function formatRegions(
-  regions: Region[],
+  regions:
+    Region[],
 ) {
   return regions
-    .map((region) =>
-      region === "US"
-        ? "US"
-        : "Canada",
+    .map(
+      (
+        region,
+      ) =>
+        region ===
+        "US"
+          ? "US"
+          : "Canada",
     )
-    .join(" • ");
+    .join(
+      " • ",
+    );
+}
+
+function buildDetectionMap(
+  detections:
+    Awaited<
+      ReturnType<
+        typeof getCloudPublicDetections
+      >
+    >,
+) {
+  const detectionMap =
+    new Map<
+      number,
+      Set<
+        DetectionType
+      >
+    >();
+
+  for (
+    const detection of
+    detections
+  ) {
+    if (
+      detection.tmdbId ===
+      null
+    ) {
+      continue;
+    }
+
+    const existing =
+      detectionMap.get(
+        detection.tmdbId,
+      ) ??
+      new Set<
+        DetectionType
+      >();
+
+    existing.add(
+      detection
+        .detectionType,
+    );
+
+    detectionMap.set(
+      detection.tmdbId,
+      existing,
+    );
+  }
+
+  return detectionMap;
+}
+
+function getAvailabilityBadges(
+  movieId:
+    number,
+
+  detectionMap:
+    Map<
+      number,
+      Set<
+        DetectionType
+      >
+    >,
+): BrowseAvailabilityBadge[] {
+  const badges:
+    BrowseAvailabilityBadge[] =
+      [
+        {
+          label:
+            "Theatrical",
+
+          tone:
+            "official",
+        },
+      ];
+
+  const detectionTypes =
+    detectionMap.get(
+      movieId,
+    );
+
+  if (
+    !detectionTypes
+  ) {
+    return badges;
+  }
+
+  if (
+    detectionTypes.has(
+      "CAM",
+    )
+  ) {
+    badges.push({
+      label:
+        "CAM Detected",
+
+      tone:
+        "cam",
+    });
+  }
+
+  if (
+    detectionTypes.has(
+      "WEB",
+    )
+  ) {
+    badges.push({
+      label:
+        "WEB Detected",
+
+      tone:
+        "web",
+    });
+  }
+
+  if (
+    detectionTypes.has(
+      "BLURAY",
+    )
+  ) {
+    badges.push({
+      label:
+        "Blu-ray Detected",
+
+      tone:
+        "bluray",
+    });
+  }
+
+  return badges;
 }
 
 export default async function MoviesPage({
@@ -309,59 +556,90 @@ export default async function MoviesPage({
     await searchParams;
 
   const requestedPage =
-    parsePage(params.page);
+    parsePage(
+      params.page,
+    );
+
+  const [
+    moviePage,
+    publicDetections,
+  ] =
+    await Promise.all([
+      getCuratedMovies(
+        requestedPage,
+      ),
+
+      getCloudPublicDetections(),
+    ]);
 
   const {
     movies,
     totalPages,
     totalResults,
-  } = await getCuratedMovies(
-    requestedPage,
-  );
+  } =
+    moviePage;
 
-  const page = Math.min(
-    requestedPage,
-    totalPages,
-  );
+  const detectionMap =
+    buildDetectionMap(
+      publicDetections,
+    );
 
-  const items: BrowseTitle[] =
-    movies.map((movie) => ({
-      id: movie.id,
+  const page =
+    Math.min(
+      requestedPage,
+      totalPages,
+    );
 
-      title: movie.title,
+  const items:
+    BrowseTitle[] =
+    movies.map(
+      (movie) => ({
+        id:
+          movie.id,
 
-      overview:
-        movie.overview,
+        title:
+          movie.title,
 
-      posterPath:
-        movie.poster_path,
+        overview:
+          movie.overview,
 
-      date:
-        movie.release_date,
+        posterPath:
+          movie.poster_path,
 
-      dateLabel:
-        "Theatrical",
+        date:
+          movie.release_date,
 
-      categoryLabel:
-        "Movie",
+        dateLabel:
+          "Theatrical",
 
-      regionLabel:
-        formatRegions(
-          movie.regions,
-        ),
+        categoryLabel:
+          "Movie",
 
-      rating:
-        movie.vote_average,
+        regionLabel:
+          formatRegions(
+            movie.regions,
+          ),
 
-      voteCount:
-        movie.vote_count,
+        rating:
+          movie.vote_average,
 
-      href:
-        `/movies/${movie.id}`,
-    }));
+        voteCount:
+          movie.vote_count,
+
+        href:
+          `/movies/${movie.id}`,
+
+        availabilityBadges:
+          getAvailabilityBadges(
+            movie.id,
+            detectionMap,
+          ),
+      }),
+    );
 
   const initialView =
-    params.view === "list"
+    params.view ===
+    "list"
       ? "list"
       : "cards";
 
@@ -371,23 +649,35 @@ export default async function MoviesPage({
 
       <section className="mx-auto w-full max-w-7xl px-6 py-12">
         <p className="text-xs font-medium uppercase tracking-[0.25em] text-red-500">
-          Release Intelligence
+          Latest Theatrical Releases
         </p>
 
         <h1 className="mt-3 text-4xl font-bold tracking-tight">
-          Movies
+          Latest Movies in Theaters
         </h1>
 
         <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
-          Recent English-language
-          theatrical releases focused
-          on the US, Canada and major
-          Western markets.
+          The latest English-language
+          movies released in theaters
+          across the US, Canada and
+          major Western markets.
+        </p>
+
+        <p className="mt-2 max-w-2xl text-xs leading-5 text-zinc-600">
+          Availability indicators show
+          official theatrical releases
+          alongside CAM, WEB and Blu-ray
+          detections recorded by
+          Watch Leaks.
         </p>
 
         <TitleBrowser
-          items={items}
-          page={page}
+          items={
+            items
+          }
+          page={
+            page
+          }
           totalPages={
             totalPages
           }
@@ -403,7 +693,8 @@ export default async function MoviesPage({
         <p className="mt-10 text-xs text-zinc-700">
           Movie metadata, ratings
           and images provided by
-          TMDB.
+          TMDB. Detection indicators
+          are provided by Watch Leaks.
         </p>
       </section>
     </main>

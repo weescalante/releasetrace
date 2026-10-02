@@ -611,17 +611,36 @@ function getDetectionRelease(
     };
   }
 
+  if (
+    detection
+      .detectionType ===
+    "WEB"
+  ) {
+    return {
+      stage:
+        "Digital",
+
+      date:
+        detection
+          .digitalReleaseDate,
+
+      region:
+        detection
+          .digitalReleaseRegion,
+    };
+  }
+
   return {
     stage:
-      "Digital",
+      "Physical",
 
     date:
       detection
-        .digitalReleaseDate,
+        .physicalReleaseDate,
 
     region:
       detection
-        .digitalReleaseRegion,
+        .physicalReleaseRegion,
   };
 }
 
@@ -895,7 +914,9 @@ export default async function AdminPage({
     params.type ===
       "CAM" ||
     params.type ===
-      "WEB"
+      "WEB" ||
+    params.type ===
+      "BLURAY"
       ? params.type
       : undefined;
 
@@ -1706,7 +1727,7 @@ export default async function AdminPage({
                                 <div className="mb-2 grid gap-2 border-b border-zinc-900 pb-2 text-[10px] lg:grid-cols-[1.2fr_1fr_1fr]">
                                   <div>
                                     <p className="mb-1 text-[8px] font-bold uppercase tracking-[0.12em] text-zinc-600">
-                                      CinemaCity Source
+                                      Source
                                     </p>
 
                                     <p className="font-semibold text-zinc-200">
@@ -1874,6 +1895,24 @@ export default async function AdminPage({
                 }`}
               >
                 WEB
+              </a>
+
+              <a
+                href={getDetectionHref({
+                  type:
+                    "BLURAY",
+
+                  reviewPage:
+                    currentReviewPage,
+                })}
+                className={`border px-2 py-1 text-[9px] font-bold ${
+                  detectionType ===
+                  "BLURAY"
+                    ? "border-red-500/60 bg-red-500/10 text-red-300"
+                    : "border-zinc-800 text-zinc-500 hover:text-white"
+                }`}
+              >
+                BLURAY
               </a>
             </div>
           </div>

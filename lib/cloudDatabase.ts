@@ -2,7 +2,8 @@ import { turso } from "./turso";
 
 export type DetectionType =
   | "CAM"
-  | "WEB";
+  | "WEB"
+  | "BLURAY";
 
 export type DetectionInput = {
   tmdbId: number | null;
@@ -388,6 +389,14 @@ function getRelevantReleaseDate(
       .digital_release_date;
   }
 
+  if (
+    row.detection_type ===
+    "BLURAY"
+  ) {
+    return row
+      .physical_release_date;
+  }
+
   return null;
 }
 
@@ -408,6 +417,14 @@ function getRelevantReleaseRegion(
   ) {
     return row
       .digital_release_region;
+  }
+
+  if (
+    row.detection_type ===
+    "BLURAY"
+  ) {
+    return row
+      .physical_release_region;
   }
 
   return null;
@@ -626,7 +643,7 @@ function mapAdminDetectionRow(
  * strings here because HTML decoding or
  * normalization may change title text while
  * the source URL still identifies the exact
- * same CinemaCity item.
+ * same source item.
  *
  * Nothing is deleted from detections.
  *
@@ -665,16 +682,146 @@ const NO_PENDING_REVIEW_CLAUSE = `
 `;
 
 /*
- * PUBLIC SHADOW ZONE / WATCH LEAKS FILTER
+ * PUBLIC DETECTION IDENTITY
  *
- * Public detection intelligence is focused
- * on the current release year.
+ * Public feeds should represent a detection
+ * EVENT, not every individual source
+ * observation.
  *
- * In 2026:
- *   only 2026 titles are eligible.
+ * Primary identity:
  *
- * In 2027:
- *   this automatically becomes 2027.
+ *   TMDB ID + detection type
+ *
+ * Example:
+ *
+ *   TMDB 123 + WEB
+ *
+ * If TMDB ID is unavailable, fall back to:
+ *
+ *   normalized title + year + type
+ *
+ * The detection type itself is partitioned
+ * separately in the dedupe query.
+ *
+ * This means a movie can legitimately have:
+ *
+ *   one CAM event
+ *   one WEB event
+ *   one BLURAY event
+ *
+ * while multiple sources observing the same
+ * WEB event do not create duplicate public
+ * cards.
+ */
+function getPublicIdentityKeySql() {
+  return `
+    CASE
+
+      WHEN
+        tmdb_id IS NOT NULL
+
+      THEN
+        'tmdb:' ||
+        CAST(
+          tmdb_id
+          AS TEXT
+        )
+
+      ELSE
+        'title:' ||
+        LOWER(
+          TRIM(
+            COALESCE(
+              title,
+              ''
+            )
+          )
+        ) ||
+        '|year:' ||
+        COALESCE(
+          year,
+          ''
+        )
+
+    END
+  `;
+}
+
+/*
+ * PUBLIC DEDUPLICATION
+ *
+ * All eligible source observations remain
+ * stored in Turso.
+ *
+ * Public feeds collapse observations that
+ * resolve to the same:
+ *
+ *   movie + detection type
+ *
+ * The earliest detected_at observation wins.
+ *
+ * This preserves Watch Leaks' first-seen
+ * timestamp even when another monitored
+ * source sees the same availability later.
+ */
+function getPublicDedupedCte(
+  whereClause: string,
+) {
+  const identityKey =
+    getPublicIdentityKeySql();
+
+  return `
+    WITH eligible_detections AS (
+
+      SELECT
+        *,
+
+        ${identityKey}
+          AS public_identity_key
+
+      FROM detections
+
+      WHERE
+        ${whereClause}
+    ),
+
+    ranked_detections AS (
+
+      SELECT
+        *,
+
+        ROW_NUMBER() OVER (
+
+          PARTITION BY
+            detection_type,
+            public_identity_key
+
+          ORDER BY
+            datetime(
+              detected_at
+            ) ASC,
+            id ASC
+
+        ) AS public_rank
+
+      FROM eligible_detections
+    )
+  `;
+}
+
+/*
+ * PUBLIC WATCH LEAKS FILTER
+ *
+ * CAM and WEB public intelligence remains
+ * focused on the current release year.
+ *
+ * BLURAY is intentionally different:
+ * Latest Blu-rays is a real-time availability
+ * feed, so any verified Blu-ray detection is
+ * eligible when its detected_at timestamp is
+ * recent, regardless of the movie's original
+ * release year or whether TMDB has an official
+ * physical-release date.
  *
  * Historical records remain in Turso.
  */
@@ -740,49 +887,72 @@ function getPublicDetectionWhereClause(
     `;
   }
 
-  return `
-    detection_type = 'WEB'
+  if (
+    detectionType ===
+    "WEB"
+  ) {
+    return `
+      detection_type = 'WEB'
 
-    AND ${currentYearClause}
+      AND ${currentYearClause}
+
+      AND ${NO_PENDING_REVIEW_CLAUSE}
+
+      AND
+      (
+        (
+          digital_release_date IS NOT NULL
+
+          AND date(
+            digital_release_date
+          )
+            BETWEEN date(
+              'now',
+              '-120 days'
+            )
+            AND date(
+              'now',
+              '+30 days'
+            )
+        )
+
+        OR
+
+        (
+          digital_release_date IS NULL
+
+          AND date(
+            detected_at
+          )
+            BETWEEN date(
+              'now',
+              '-120 days'
+            )
+            AND date(
+              'now',
+              '+1 day'
+            )
+        )
+      )
+    `;
+  }
+
+  return `
+    detection_type = 'BLURAY'
 
     AND ${NO_PENDING_REVIEW_CLAUSE}
 
-    AND
-    (
-      (
-        digital_release_date IS NOT NULL
-
-        AND date(
-          digital_release_date
-        )
-          BETWEEN date(
-            'now',
-            '-120 days'
-          )
-          AND date(
-            'now',
-            '+30 days'
-          )
-      )
-
-      OR
-
-      (
-        digital_release_date IS NULL
-
-        AND date(
-          detected_at
-        )
-          BETWEEN date(
-            'now',
-            '-120 days'
-          )
-          AND date(
-            'now',
-            '+1 day'
-          )
-      )
+    AND date(
+      detected_at
     )
+      BETWEEN date(
+        'now',
+        '-120 days'
+      )
+      AND date(
+        'now',
+        '+1 day'
+      )
   `;
 }
 
@@ -793,12 +963,11 @@ function getPublicDetectionWhereClause(
  * current-year view so historical detection
  * data remains inspectable.
  *
- * However, the same verification safeguard
- * applies:
+ * Admin intentionally does NOT use the
+ * public dedupe layer.
  *
- * a detection with a matching PENDING
- * review is not treated as verified
- * Detection Intelligence.
+ * Every underlying monitored-source
+ * observation remains visible to Admin.
  */
 function getAdminDetectionWhereClause(
   detectionType?:
@@ -900,6 +1069,29 @@ function getAdminDetectionWhereClause(
     `;
   }
 
+  if (
+    detectionType ===
+    "BLURAY"
+  ) {
+    return `
+      detection_type = 'BLURAY'
+
+      AND ${NO_PENDING_REVIEW_CLAUSE}
+
+      AND date(
+        detected_at
+      )
+        BETWEEN date(
+          'now',
+          '-120 days'
+        )
+        AND date(
+          'now',
+          '+1 day'
+        )
+    `;
+  }
+
   return `
     (
       detection_type = 'CAM'
@@ -988,6 +1180,26 @@ function getAdminDetectionWhereClause(
         )
       )
     )
+
+    OR
+
+    (
+      detection_type = 'BLURAY'
+
+      AND ${NO_PENDING_REVIEW_CLAUSE}
+
+      AND date(
+        detected_at
+      )
+        BETWEEN date(
+          'now',
+          '-120 days'
+        )
+        AND date(
+          'now',
+          '+1 day'
+        )
+    )
   `;
 }
 
@@ -1031,6 +1243,11 @@ export async function getCloudPublicDetectionsPage({
       detectionType,
     );
 
+  const dedupedCte =
+    getPublicDedupedCte(
+      whereClause,
+    );
+
   const [
     detectionsResult,
     countResult,
@@ -1038,6 +1255,8 @@ export async function getCloudPublicDetectionsPage({
     await Promise.all([
       turso.execute({
         sql: `
+          ${dedupedCte}
+
           SELECT
             id,
             tmdb_id,
@@ -1060,10 +1279,10 @@ export async function getCloudPublicDetectionsPage({
 
             poster_path
 
-          FROM detections
+          FROM ranked_detections
 
           WHERE
-            ${whereClause}
+            public_rank = 1
 
           ORDER BY
             datetime(
@@ -1083,13 +1302,15 @@ export async function getCloudPublicDetectionsPage({
       }),
 
       turso.execute(`
+        ${dedupedCte}
+
         SELECT
           COUNT(*) AS total
 
-        FROM detections
+        FROM ranked_detections
 
         WHERE
-          ${whereClause}
+          public_rank = 1
       `),
     ]);
 
@@ -1152,8 +1373,38 @@ export async function getCloudPublicDetections(): Promise<
       "WEB",
     );
 
+  const blurayWhere =
+    getPublicDetectionWhereClause(
+      "BLURAY",
+    );
+
+  const combinedWhere = `
+    (
+      ${camWhere}
+    )
+
+    OR
+
+    (
+      ${webWhere}
+    )
+
+    OR
+
+    (
+      ${blurayWhere}
+    )
+  `;
+
+  const dedupedCte =
+    getPublicDedupedCte(
+      combinedWhere,
+    );
+
   const result =
     await turso.execute(`
+      ${dedupedCte}
+
       SELECT
         id,
         tmdb_id,
@@ -1176,18 +1427,10 @@ export async function getCloudPublicDetections(): Promise<
 
         poster_path
 
-      FROM detections
+      FROM ranked_detections
 
       WHERE
-        (
-          ${camWhere}
-        )
-
-        OR
-
-        (
-          ${webWhere}
-        )
+        public_rank = 1
 
       ORDER BY
         datetime(
@@ -1207,27 +1450,40 @@ export async function getCloudPublicDetections(): Promise<
 
 /*
  * Movie detail pages use this function for
- * detection history.
+ * public detection history.
  *
- * Apply the pending-review safeguard here
- * as well so an unresolved legacy detection
- * cannot leak back into a public movie
- * detail page while being hidden from the
- * main detection feed.
+ * Public history uses the same logical-event
+ * dedupe rule as the main Watch Leaks feeds.
  *
- * We do NOT impose the current-year filter
- * here because an approved historical
- * detection can still legitimately belong
- * in a movie's detection history.
+ * If CinemaCity and PreDB both identify the
+ * same movie's WEB availability, the movie
+ * detail page shows one WEB event using the
+ * earliest detected_at timestamp.
+ *
+ * Underlying source observations remain in
+ * Turso and remain available to Admin.
  */
 export async function getCloudPublicDetectionsByTmdbId(
   tmdbId: number,
 ): Promise<
   PublicDetection[]
 > {
+  const whereClause = `
+    tmdb_id = ?
+
+    AND ${NO_PENDING_REVIEW_CLAUSE}
+  `;
+
+  const dedupedCte =
+    getPublicDedupedCte(
+      whereClause,
+    );
+
   const result =
     await turso.execute({
       sql: `
+        ${dedupedCte}
+
         SELECT
           id,
           tmdb_id,
@@ -1250,11 +1506,10 @@ export async function getCloudPublicDetectionsByTmdbId(
 
           poster_path
 
-        FROM detections
+        FROM ranked_detections
 
-        WHERE tmdb_id = ?
-
-          AND ${NO_PENDING_REVIEW_CLAUSE}
+        WHERE
+          public_rank = 1
 
         ORDER BY
           datetime(
