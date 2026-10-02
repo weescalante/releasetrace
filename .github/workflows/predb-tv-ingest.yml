@@ -1,0 +1,23 @@
+name: PreDB TV Ingestion
+
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger PreDB TV ingestion
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "https://releasetrace-app.vercel.app/api/ingest/predb-tv"
