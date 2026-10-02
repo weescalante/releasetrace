@@ -1,23 +1,29 @@
-name: PreDB TV Ingestion
+name: PreDB TV Connectivity Test
 
 on:
-  schedule:
-    - cron: "7,22,37,52 * * * *"
-
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  ingest:
+  test:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Trigger PreDB TV ingestion
-        env:
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      - name: Test PreDB TV access
         run: |
-          curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $CRON_SECRET" \
-            "https://releasetrace-app.vercel.app/api/ingest/predb-tv"
+          echo "Testing PreDB TV page from GitHub Actions..."
+
+          curl \
+            --silent \
+            --show-error \
+            --location \
+            --output /tmp/predb-tv.html \
+            --write-out "HTTP STATUS: %{http_code}\nSIZE: %{size_download} bytes\n" \
+            -H "User-Agent: WatchLeaks/1.0" \
+            -H "Accept: text/html,application/xhtml+xml" \
+            "https://predb.me/?cats=tv"
+
+          echo "Downloaded file size:"
+          wc -c /tmp/predb-tv.html
