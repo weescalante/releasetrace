@@ -1076,26 +1076,47 @@ async function getPredbTvPageReleases() {
 }
 
 export async function getPredbUnknownReleases() {
-  const releases =
-    await fetchPredbPage({
-      url:
-        PREDB_UNKNOWN_URL,
+  /*
+   * The Unknown page is supplemental.
+   *
+   * PreDB may occasionally refuse or fail
+   * this category independently of the main
+   * Movies/TV pages (for example 403/503).
+   *
+   * A failure here must therefore NOT abort
+   * movie or TV ingestion. We log the issue
+   * and continue with the primary category
+   * pages only.
+   */
+  try {
+    const releases =
+      await fetchPredbPage({
+        url:
+          PREDB_UNKNOWN_URL,
 
-      label:
-        "Unknown",
+        label:
+          "Unknown",
 
-      fallbackCategory:
-        "Unknown",
+        fallbackCategory:
+          "Unknown",
 
-      sourcePage:
-        "UNKNOWN",
-    });
+        sourcePage:
+          "UNKNOWN",
+      });
 
-  return sortNewestFirst(
-    releases.filter(
-      isRelevantSignal,
-    ),
-  );
+    return sortNewestFirst(
+      releases.filter(
+        isRelevantSignal,
+      ),
+    );
+  } catch (error) {
+    console.warn(
+      "PreDB Unknown supplemental source unavailable; continuing without it:",
+      error,
+    );
+
+    return [];
+  }
 }
 
 export async function getPredbMovieReleases() {
