@@ -17,6 +17,13 @@ import {
 const PREDB_SOURCE =
   "PreDB";
 
+type PredbTvRelease =
+  Awaited<
+    ReturnType<
+      typeof getPredbTvReleases
+    >
+  >[number];
+
 export type PredbTvIngestionSummary = {
   rawPosts:
     number;
@@ -220,13 +227,30 @@ function hasValidEpisodeIdentity({
 
 export async function ingestPredbTv({
   write = false,
+
+  rawReleases:
+    suppliedRawReleases,
 }: {
   write?:
     boolean;
+
+  rawReleases?:
+    PredbTvRelease[];
 } = {}): Promise<
   PredbTvIngestionResult
 > {
+  /*
+   * Production normally fetches PreDB itself.
+   *
+   * A caller may instead supply already-parsed
+   * PreDB TV releases. This allows an external
+   * fetch layer such as GitHub Actions to obtain
+   * the source HTML when the Vercel network is
+   * blocked by PreDB, while preserving this
+   * exact matching and persistence pipeline.
+   */
   const rawReleases =
+    suppliedRawReleases ??
     await getPredbTvReleases();
 
   /*

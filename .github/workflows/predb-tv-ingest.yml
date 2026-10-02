@@ -1,4 +1,4 @@
-name: PreDB TV Connectivity Test
+name: PreDB TV Ingestion
 
 on:
   workflow_dispatch:
@@ -7,23 +7,98 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  ingest:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Test PreDB TV access
+      - name: Fetch PreDB TV page
         run: |
-          echo "Testing PreDB TV page from GitHub Actions..."
+          echo "Fetching primary PreDB TV page..."
 
           curl \
+            --fail-with-body \
             --silent \
             --show-error \
             --location \
             --output /tmp/predb-tv.html \
-            --write-out "HTTP STATUS: %{http_code}\nSIZE: %{size_download} bytes\n" \
             -H "User-Agent: WatchLeaks/1.0" \
             -H "Accept: text/html,application/xhtml+xml" \
             "https://predb.me/?cats=tv"
 
-          echo "Downloaded file size:"
-          wc -c /tmp/predb-tv.html
+          echo "Primary TV page downloaded."
+          echo "TV HTML bytes: $(wc -c < /tmp/predb-tv.html)"
+
+      - name: Fetch optional PreDB Unknown page
+        run: |
+          echo "Fetching supplemental PreDB Unknown page..."
+
+          if curl \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
+            --output /tmp/predb-unknown.html \
+            -H "User-Agent: WatchLeaks/1.0" \
+            -H "Accept: text/html,application/xhtml+xml" \
+            "https://predb.me/?cats=unknown"
+          then
+            echo "Unknown page downloaded."
+            echo "Unknown HTML bytes: $(wc -c < /tmp/predb-unknown.html)"
+          else
+            echo "Unknown page unavailable. Continuing without supplemental data."
+            : > /tmp/predb-unknown.html
+          fi
+
+      - name: Build ingestion payload
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          tv_html = Path(
+              "/tmp/predb-tv.html"
+          ).read_text(
+              encoding="utf-8",
+              errors="replace",
+          )
+
+          unknown_html = Path(
+              "/tmp/predb-unknown.html"
+          ).read_text(
+              encoding="utf-8",
+              errors="replace",
+          )
+
+          payload = {
+              "tvHtml": tv_html,
+              "unknownHtml": unknown_html,
+          }
+
+          Path(
+              "/tmp/predb-tv-payload.json"
+          ).write_text(
+              json.dumps(payload),
+              encoding="utf-8",
+          )
+
+          print(
+              "Payload bytes:",
+              Path(
+                  "/tmp/predb-tv-payload.json"
+              ).stat().st_size,
+          )
+          PY
+
+      - name: Send PreDB TV data to WATCH LEAKS
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl \
+            --fail-with-body \
+            --silent \
+            --show-error \
+            --request POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            --data-binary "@/tmp/predb-tv-payload.json" \
+            "https://releasetrace-app.vercel.app/api/ingest/predb-tv"
