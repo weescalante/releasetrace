@@ -14,12 +14,35 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://watchleaks.com"),
+
   title: {
     default: "Watch Leaks",
     template: "%s | Watch Leaks",
   },
+
   description:
     "Track theatrical, digital, physical, streaming, and unauthorized availability across film and television.",
+
+  openGraph: {
+    type: "website",
+    siteName: "Watch Leaks",
+    title: "Watch Leaks",
+    description:
+      "Track theatrical, digital, physical, streaming, and unauthorized availability across film and television.",
+  },
+
+  twitter: {
+    card: "summary_large_image",
+    title: "Watch Leaks",
+    description:
+      "Track theatrical, digital, physical, streaming, and unauthorized availability across film and television.",
+  },
+
+  robots: {
+    index: true,
+    follow: true,
+  },
 };
 
 export default function RootLayout({
