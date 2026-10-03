@@ -348,3 +348,249 @@ export async function getPublicTvDetectionsByTmdbId(
     mapTvDetectionRow,
   );
 }
+
+/*
+ * Returns one newest public TV WEB
+ * detection per series.
+ *
+ * Step 1:
+ * Deduplicate observations for each
+ * logical episode and retain that
+ * episode's earliest first-seen event.
+ *
+ * Step 2:
+ * Rank those unique episodes inside
+ * each TMDB TV series and retain only
+ * the series' newest detected episode.
+ *
+ * This prevents one series with many
+ * detected episodes from dominating
+ * the Latest TV Detections section.
+ */
+export async function getLatestPublicTvDetections(
+  limit:
+    number = 12,
+): Promise<
+  PublicTvDetection[]
+> {
+  const safeLimit =
+    Number.isInteger(
+      limit,
+    )
+      ? Math.min(
+          Math.max(
+            limit,
+            1,
+          ),
+          50,
+        )
+      : 12;
+
+  const result =
+    await turso.execute({
+      sql: `
+        WITH eligible_detections AS (
+
+          SELECT
+            id,
+            tmdb_id,
+            title,
+            year,
+
+            detection_type,
+            quality,
+            detected_at,
+
+            poster_path,
+
+            season_number,
+            episode_number,
+            episode_title,
+            episode_air_date,
+
+            CASE
+
+              WHEN
+                season_number IS NOT NULL
+                AND episode_number IS NOT NULL
+
+              THEN
+                'episode:' ||
+                CAST(
+                  season_number
+                  AS TEXT
+                ) ||
+                ':' ||
+                CAST(
+                  episode_number
+                  AS TEXT
+                )
+
+              WHEN
+                episode_air_date IS NOT NULL
+
+              THEN
+                'date:' ||
+                episode_air_date
+
+              ELSE
+                'row:' ||
+                CAST(
+                  id
+                  AS TEXT
+                )
+
+            END
+              AS episode_identity_key
+
+          FROM detections
+
+          WHERE
+            media_type = 'TV'
+
+            AND detection_type = 'WEB'
+        ),
+
+        episode_ranked AS (
+
+          SELECT
+            *,
+
+            ROW_NUMBER() OVER (
+
+              PARTITION BY
+                tmdb_id,
+                detection_type,
+                episode_identity_key
+
+              ORDER BY
+                datetime(
+                  detected_at
+                ) ASC,
+                id ASC
+
+            ) AS episode_public_rank
+
+          FROM eligible_detections
+        ),
+
+        unique_episodes AS (
+
+          SELECT
+            id,
+            tmdb_id,
+            title,
+            year,
+
+            detection_type,
+            quality,
+            detected_at,
+
+            poster_path,
+
+            season_number,
+            episode_number,
+            episode_title,
+            episode_air_date
+
+          FROM episode_ranked
+
+          WHERE
+            episode_public_rank = 1
+        ),
+
+        series_ranked AS (
+
+          SELECT
+            *,
+
+            ROW_NUMBER() OVER (
+
+              PARTITION BY
+                tmdb_id
+
+              ORDER BY
+                datetime(
+                  detected_at
+                ) DESC,
+
+                CASE
+                  WHEN
+                    episode_air_date IS NULL
+                  THEN
+                    1
+                  ELSE
+                    0
+                END ASC,
+
+                date(
+                  episode_air_date
+                ) DESC,
+
+                season_number DESC,
+                episode_number DESC,
+                id DESC
+
+            ) AS series_public_rank
+
+          FROM unique_episodes
+        )
+
+        SELECT
+          id,
+          tmdb_id,
+          title,
+          year,
+
+          detection_type,
+          quality,
+          detected_at,
+
+          poster_path,
+
+          season_number,
+          episode_number,
+          episode_title,
+          episode_air_date
+
+        FROM series_ranked
+
+        WHERE
+          series_public_rank = 1
+
+        ORDER BY
+          datetime(
+            detected_at
+          ) DESC,
+
+          CASE
+            WHEN
+              episode_air_date IS NULL
+            THEN
+              1
+            ELSE
+              0
+          END ASC,
+
+          date(
+            episode_air_date
+          ) DESC,
+
+          tmdb_id ASC
+
+        LIMIT ?
+      `,
+
+      args: [
+        safeLimit,
+      ],
+    });
+
+  const rows =
+    result.rows as unknown as
+    TvDetectionRow[];
+
+  return rows.map(
+    mapTvDetectionRow,
+  );
+}
