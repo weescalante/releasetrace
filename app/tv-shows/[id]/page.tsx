@@ -4,6 +4,11 @@ import { notFound } from "next/navigation";
 
 import SiteHeader from "../../../components/SiteHeader";
 
+import {
+  getPublicTvDetectionsByTmdbId,
+  type PublicTvDetection,
+} from "../../../lib/tvDetections";
+
 type Genre = {
   id: number;
   name: string;
@@ -343,6 +348,149 @@ function formatNetworks(
     .join(", ");
 }
 
+
+function formatDetectionDateTime(
+  value: string,
+) {
+  const date =
+    new Date(
+      value,
+    );
+
+  if (
+    Number.isNaN(
+      date.getTime(),
+    )
+  ) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat(
+    "en-US",
+    {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: "UTC",
+      timeZoneName: "short",
+    },
+  ).format(
+    date,
+  );
+}
+
+function formatDetectionEpisodeCode(
+  detection:
+    PublicTvDetection,
+) {
+  if (
+    detection.seasonNumber !==
+      null &&
+    detection.episodeNumber !==
+      null
+  ) {
+    return `S${padNumber(
+      detection.seasonNumber,
+    )}E${padNumber(
+      detection.episodeNumber,
+    )}`;
+  }
+
+  return "Date-based";
+}
+
+function getDetectionLatencyDays(
+  detectedAt: string,
+  episodeAirDate: string | null,
+) {
+  if (!episodeAirDate) {
+    return null;
+  }
+
+  const detected =
+    new Date(
+      detectedAt,
+    );
+
+  const airDate =
+    new Date(
+      `${episodeAirDate}T00:00:00Z`,
+    );
+
+  if (
+    Number.isNaN(
+      detected.getTime(),
+    ) ||
+    Number.isNaN(
+      airDate.getTime(),
+    )
+  ) {
+    return null;
+  }
+
+  const detectedDateUtc =
+    Date.UTC(
+      detected.getUTCFullYear(),
+      detected.getUTCMonth(),
+      detected.getUTCDate(),
+    );
+
+  const airDateUtc =
+    Date.UTC(
+      airDate.getUTCFullYear(),
+      airDate.getUTCMonth(),
+      airDate.getUTCDate(),
+    );
+
+  return Math.round(
+    (
+      detectedDateUtc -
+      airDateUtc
+    ) /
+      86_400_000,
+  );
+}
+
+function formatDetectionLatency(
+  detectedAt: string,
+  episodeAirDate: string | null,
+) {
+  const days =
+    getDetectionLatencyDays(
+      detectedAt,
+      episodeAirDate,
+    );
+
+  if (days === null) {
+    return "Unavailable";
+  }
+
+  if (days === 0) {
+    return "Same day";
+  }
+
+  if (days > 0) {
+    return `+${days} ${
+      days === 1
+        ? "day"
+        : "days"
+    }`;
+  }
+
+  const absoluteDays =
+    Math.abs(
+      days,
+    );
+
+  return `-${absoluteDays} ${
+    absoluteDays === 1
+      ? "day"
+      : "days"
+  }`;
+}
+
 function getBackDestination(
   from: string | undefined,
   referer: string,
@@ -507,14 +655,24 @@ export default async function TvShowPage({
       show,
     );
 
-  const season =
+  const [
+    season,
+    tvDetections,
+  ] = await Promise.all([
     relevantSeasonNumber !==
     null
-      ? await getSeason(
+      ? getSeason(
           routeParams.id,
           relevantSeasonNumber,
         )
-      : null;
+      : Promise.resolve(
+          null,
+        ),
+
+    getPublicTvDetectionsByTmdbId(
+      show.id,
+    ),
+  ]);
 
   const posterUrl =
     show.poster_path
@@ -753,6 +911,12 @@ export default async function TvShowPage({
           </div>
         </div>
 
+        <TvAvailabilitySection
+          detections={
+            tvDetections
+          }
+        />
+
         <EpisodeStatusSection
           lastEpisode={
             show.last_episode_to_air
@@ -781,13 +945,232 @@ export default async function TvShowPage({
           Television metadata, ratings,
           season information and episode
           information provided by TMDB.
-          Watch Leaks does not currently
-          publish TV unauthorized-availability
-          detections until a dedicated TV
-          detection source is connected.
+          Detection intelligence reflects
+          verified WEB availability observations.
+          Watch Leaks does not provide
+          unauthorized links or downloads.
         </p>
       </section>
     </main>
+  );
+}
+
+
+function TvAvailabilitySection({
+  detections,
+}: {
+  detections:
+    PublicTvDetection[];
+}) {
+  const timestamps =
+    detections
+      .map(
+        (detection) =>
+          new Date(
+            detection.detectedAt,
+          ).getTime(),
+      )
+      .filter(
+        (timestamp) =>
+          !Number.isNaN(
+            timestamp,
+          ),
+      );
+
+  const firstDetected =
+    timestamps.length > 0
+      ? new Date(
+          Math.min(
+            ...timestamps,
+          ),
+        ).toISOString()
+      : null;
+
+  const latestDetected =
+    timestamps.length > 0
+      ? new Date(
+          Math.max(
+            ...timestamps,
+          ),
+        ).toISOString()
+      : null;
+
+  return (
+    <section className="mt-12">
+      <div className="border-b border-zinc-800 pb-3">
+        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-red-500">
+          Detection Intelligence
+        </p>
+
+        <h2 className="mt-2 text-2xl font-bold tracking-tight">
+          Online Availability
+        </h2>
+
+        <p className="mt-1 text-sm text-zinc-400">
+          Verified WEB availability detections
+          for individual episodes of this series.
+        </p>
+      </div>
+
+      <div className="mt-4 grid border-y border-zinc-800 sm:grid-cols-4">
+        <MetadataItem
+          label="Status"
+          value={
+            detections.length >
+            0
+              ? "WEB Available"
+              : "No Detection"
+          }
+        />
+
+        <MetadataItem
+          label="Episodes Detected"
+          value={String(
+            detections.length,
+          )}
+        />
+
+        <MetadataItem
+          label="First Detected"
+          value={
+            firstDetected
+              ? formatDetectionDateTime(
+                  firstDetected,
+                )
+              : "Unavailable"
+          }
+        />
+
+        <MetadataItem
+          label="Latest Detected"
+          value={
+            latestDetected
+              ? formatDetectionDateTime(
+                  latestDetected,
+                )
+              : "Unavailable"
+          }
+        />
+      </div>
+
+      {detections.length ===
+      0 ? (
+        <p className="mt-5 text-sm text-zinc-400">
+          No verified WEB episode detections
+          are currently stored for this series.
+        </p>
+      ) : (
+        <div className="mt-4">
+          <div className="hidden grid-cols-[100px_1.4fr_160px_210px_130px_120px] gap-4 border-b border-zinc-700 py-2 text-xs font-bold uppercase tracking-[0.1em] text-zinc-400 lg:grid">
+            <div>Episode</div>
+            <div>Title</div>
+            <div>Air Date</div>
+            <div>First Detected</div>
+            <div>Quality</div>
+            <div>Latency</div>
+          </div>
+
+          {detections.map(
+            (detection) => {
+              const latencyDays =
+                getDetectionLatencyDays(
+                  detection.detectedAt,
+                  detection.episodeAirDate,
+                );
+
+              return (
+                <div
+                  key={
+                    detection.id
+                  }
+                  className="grid gap-3 border-b border-zinc-900 py-4 text-sm lg:grid-cols-[100px_1.4fr_160px_210px_130px_120px] lg:items-center lg:gap-4"
+                >
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-zinc-500 lg:hidden">
+                      Episode
+                    </p>
+
+                    <span className="mt-1 inline-block border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-xs font-bold text-red-400 lg:mt-0">
+                      {formatDetectionEpisodeCode(
+                        detection,
+                      )}
+                    </span>
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-zinc-500 lg:hidden">
+                      Title
+                    </p>
+
+                    <p className="mt-1 font-semibold text-white lg:mt-0">
+                      {detection.episodeTitle ||
+                        "Episode title unavailable"}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-zinc-500 lg:hidden">
+                      Air Date
+                    </p>
+
+                    <p className="mt-1 font-medium text-zinc-300 lg:mt-0">
+                      {formatDate(
+                        detection.episodeAirDate,
+                      )}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-zinc-500 lg:hidden">
+                      First Detected
+                    </p>
+
+                    <p className="mt-1 font-medium text-zinc-300 lg:mt-0">
+                      {formatDetectionDateTime(
+                        detection.detectedAt,
+                      )}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-zinc-500 lg:hidden">
+                      Quality
+                    </p>
+
+                    <p className="mt-1 font-semibold text-zinc-200 lg:mt-0">
+                      {detection.quality ||
+                        "WEB"}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-zinc-500 lg:hidden">
+                      Latency
+                    </p>
+
+                    <p
+                      className={`mt-1 font-bold lg:mt-0 ${
+                        latencyDays !==
+                          null &&
+                        latencyDays <
+                          0
+                          ? "text-amber-300"
+                          : "text-zinc-200"
+                      }`}
+                    >
+                      {formatDetectionLatency(
+                        detection.detectedAt,
+                        detection.episodeAirDate,
+                      )}
+                    </p>
+                  </div>
+                </div>
+              );
+            },
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
