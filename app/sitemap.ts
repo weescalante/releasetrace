@@ -319,6 +319,16 @@ Promise<MetadataRoute.Sitemap> {
         priority:
           0.7,
       },
+      {
+        url:
+          `${BASE_URL}/about`,
+
+        changeFrequency:
+          "monthly",
+
+        priority:
+          0.6,
+      },
     ];
 
   try {
