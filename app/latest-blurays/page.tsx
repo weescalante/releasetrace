@@ -1,9 +1,48 @@
+import type { Metadata } from "next";
+
 import DetectionSection from "../../components/DetectionSection";
 import SiteHeader from "../../components/SiteHeader";
 
 import {
   getCloudPublicDetectionsPage,
 } from "../../lib/cloudDatabase";
+
+export const metadata: Metadata = {
+  title: "Latest Blu-ray Detections",
+
+  description:
+    "Track the latest Blu-ray detections found by Watch Leaks and compare physical-release availability with official Blu-ray release timing.",
+
+  alternates: {
+    canonical:
+      "https://watchleaks.com/latest-blurays",
+  },
+
+  openGraph: {
+    title:
+      "Latest Blu-ray Detections | Watch Leaks",
+
+    description:
+      "Track the latest Blu-ray detections found by Watch Leaks and compare physical-release availability with official Blu-ray release timing.",
+
+    url:
+      "https://watchleaks.com/latest-blurays",
+
+    type:
+      "website",
+  },
+
+  twitter: {
+    card:
+      "summary_large_image",
+
+    title:
+      "Latest Blu-ray Detections | Watch Leaks",
+
+    description:
+      "Track the latest Blu-ray detections found by Watch Leaks and compare physical-release availability with official Blu-ray release timing.",
+  },
+};
 
 export const dynamic =
   "force-dynamic";
