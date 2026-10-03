@@ -1,0 +1,107 @@
+name: PreDB Movie and Blu-ray Ingestion
+
+on:
+  schedule:
+    - cron: "10,25,40,55 * * * *"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Fetch PreDB Movies page
+        run: |
+          echo "Fetching primary PreDB Movies page..."
+
+          curl \
+            --fail-with-body \
+            --silent \
+            --show-error \
+            --location \
+            --output /tmp/predb-movies.html \
+            -H "User-Agent: WatchLeaks/1.0" \
+            -H "Accept: text/html,application/xhtml+xml" \
+            "https://predb.me/?cats=movies"
+
+          echo "Primary Movies page downloaded."
+          echo "Movies HTML bytes: $(wc -c < /tmp/predb-movies.html)"
+
+      - name: Fetch optional PreDB Unknown page
+        run: |
+          echo "Fetching supplemental PreDB Unknown page..."
+
+          if curl \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
+            --output /tmp/predb-unknown.html \
+            -H "User-Agent: WatchLeaks/1.0" \
+            -H "Accept: text/html,application/xhtml+xml" \
+            "https://predb.me/?cats=unknown"
+          then
+            echo "Unknown page downloaded."
+            echo "Unknown HTML bytes: $(wc -c < /tmp/predb-unknown.html)"
+          else
+            echo "Unknown page unavailable. Continuing without supplemental data."
+            : > /tmp/predb-unknown.html
+          fi
+
+      - name: Build ingestion payload
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          movies_html = Path(
+              "/tmp/predb-movies.html"
+          ).read_text(
+              encoding="utf-8",
+              errors="replace",
+          )
+
+          unknown_html = Path(
+              "/tmp/predb-unknown.html"
+          ).read_text(
+              encoding="utf-8",
+              errors="replace",
+          )
+
+          payload = {
+              "moviesHtml": movies_html,
+              "unknownHtml": unknown_html,
+          }
+
+          Path(
+              "/tmp/predb-movies-payload.json"
+          ).write_text(
+              json.dumps(payload),
+              encoding="utf-8",
+          )
+
+          print(
+              "Payload bytes:",
+              Path(
+                  "/tmp/predb-movies-payload.json"
+              ).stat().st_size,
+          )
+          PY
+
+      - name: Send PreDB movie and Blu-ray data to WATCH LEAKS
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl \
+            --fail-with-body \
+            --silent \
+            --show-error \
+            --request POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            --data-binary "@/tmp/predb-movies-payload.json" \
+            "https://releasetrace-app.vercel.app/api/ingest/predb-movies"

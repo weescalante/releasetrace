@@ -1,5 +1,6 @@
 import {
   getPredbMovieReleases,
+  type PredbMovieRelease,
 } from "./predb";
 
 import {
@@ -649,12 +650,29 @@ async function savePredbReview({
 
 export async function ingestPredbMovies({
   write = false,
+
+  rawReleases:
+    suppliedRawReleases,
 }: {
   write?: boolean;
+
+  rawReleases?:
+    PredbMovieRelease[];
 } = {}): Promise<
   PredbIngestionResult
 > {
+  /*
+   * Normal local/direct execution still fetches
+   * PreDB itself.
+   *
+   * Production GitHub Actions can instead fetch
+   * the HTML externally, let the API route parse
+   * it, and supply the resulting release objects
+   * here. This avoids requiring Vercel to make a
+   * blocked outbound request to PreDB.
+   */
   const rawReleases =
+    suppliedRawReleases ??
     await getPredbMovieReleases();
 
   /*
