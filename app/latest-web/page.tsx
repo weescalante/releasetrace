@@ -1,9 +1,48 @@
+import type { Metadata } from "next";
+
 import DetectionSection from "../../components/DetectionSection";
 import SiteHeader from "../../components/SiteHeader";
 
 import {
   getCloudPublicDetectionsPage,
 } from "../../lib/cloudDatabase";
+
+export const metadata: Metadata = {
+  title: "Latest WEB Detections",
+
+  description:
+    "Track the latest WEB detections found by Watch Leaks and compare digital-source availability with official digital release timing.",
+
+  alternates: {
+    canonical:
+      "https://watchleaks.com/latest-web",
+  },
+
+  openGraph: {
+    title:
+      "Latest WEB Detections | Watch Leaks",
+
+    description:
+      "Track the latest WEB detections found by Watch Leaks and compare digital-source availability with official digital release timing.",
+
+    url:
+      "https://watchleaks.com/latest-web",
+
+    type:
+      "website",
+  },
+
+  twitter: {
+    card:
+      "summary_large_image",
+
+    title:
+      "Latest WEB Detections | Watch Leaks",
+
+    description:
+      "Track the latest WEB detections found by Watch Leaks and compare digital-source availability with official digital release timing.",
+  },
+};
 
 export const dynamic =
   "force-dynamic";
