@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+
 import DetectionSection from "../../components/DetectionSection";
 import SiteHeader from "../../components/SiteHeader";
 
@@ -8,6 +10,43 @@ import {
 import {
   getFeedStatus,
 } from "../../lib/feedStatus";
+
+export const metadata: Metadata = {
+  title: "Latest CAM Detections",
+
+  description:
+    "Track the latest CAM detections found by Watch Leaks and compare camera-source availability with official theatrical release timing.",
+
+  alternates: {
+    canonical:
+      "https://watchleaks.com/latest-cams",
+  },
+
+  openGraph: {
+    title:
+      "Latest CAM Detections | Watch Leaks",
+
+    description:
+      "Track the latest CAM detections found by Watch Leaks and compare camera-source availability with official theatrical release timing.",
+
+    url:
+      "https://watchleaks.com/latest-cams",
+
+    type:
+      "website",
+  },
+
+  twitter: {
+    card:
+      "summary_large_image",
+
+    title:
+      "Latest CAM Detections | Watch Leaks",
+
+    description:
+      "Track the latest CAM detections found by Watch Leaks and compare camera-source availability with official theatrical release timing.",
+  },
+};
 
 export const dynamic =
   "force-dynamic";
