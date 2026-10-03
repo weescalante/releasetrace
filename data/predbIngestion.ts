@@ -732,7 +732,7 @@ export async function ingestPredbMovies({
         0,
 
       databaseChanges:
-        write,
+        false,
 
       blurayIndexLoaded:
         Boolean(
@@ -1496,6 +1496,13 @@ export async function ingestPredbMovies({
       );
     }
   }
+
+  summary.databaseChanges =
+    write &&
+    (
+      summary.inserted > 0 ||
+      summary.earlierUpdated > 0
+    );
 
   console.log(
     `PreDB matched identities: ${summary.matched}`,
