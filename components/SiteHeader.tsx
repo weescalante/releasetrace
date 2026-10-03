@@ -59,6 +59,13 @@ const navigation = [
     href:
       "/calendar",
   },
+  {
+    label:
+      "About",
+
+    href:
+      "/about",
+  },
 ];
 
 export default function SiteHeader() {
