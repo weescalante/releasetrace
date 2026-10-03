@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 
 import DetectionSection from "../../components/DetectionSection";
@@ -10,6 +11,43 @@ import {
 import {
   getFeedStatus,
 } from "../../lib/feedStatus";
+
+export const metadata: Metadata = {
+  title: "Leak Detections",
+
+  description:
+    "Track the latest CAM and WEB availability detected by Watch Leaks and compare detection timing with official theatrical and digital releases.",
+
+  alternates: {
+    canonical:
+      "https://watchleaks.com/leak-detections",
+  },
+
+  openGraph: {
+    title:
+      "Leak Detections | Watch Leaks",
+
+    description:
+      "Track the latest CAM and WEB availability detected by Watch Leaks and compare detection timing with official theatrical and digital releases.",
+
+    url:
+      "https://watchleaks.com/leak-detections",
+
+    type:
+      "website",
+  },
+
+  twitter: {
+    card:
+      "summary_large_image",
+
+    title:
+      "Leak Detections | Watch Leaks",
+
+    description:
+      "Track the latest CAM and WEB availability detected by Watch Leaks and compare detection timing with official theatrical and digital releases.",
+  },
+};
 
 export const dynamic =
   "force-dynamic";
